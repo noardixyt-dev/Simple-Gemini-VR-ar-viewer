@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebXR AR Hit-Test Mixed Reality</title>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    
+    <script>
+        // Custom component to handle placement logic after a surface is found
+        AFRAME.registerComponent('ball-placement', {
+            init: function () {
+                const reticle = document.getElementById('reticle');
+                const testBall = document.getElementById('testBall');
+                
+                // Hide the test ball until it's placed
+                testBall.setAttribute('visible', 'false');
+
+                // Listen for when a surface is found and the reticle is positioned
+                reticle.addEventListener('ar-hit-test-achieved', function (evt) {
+                    // Reticle is now visible and tracking a real-world surface
+                });
+
+                // Listen for a tap (select event) to place the ball
+                this.el.sceneEl.addEventListener('select', function (evt) {
+                    if (reticle.components.ar.target) {
+                        // Place the ball at the reticle's last known position
+                        testBall.setAttribute('position', reticle.getAttribute('position'));
+                        testBall.setAttribute('visible', 'true');
+                        
+                        // Stop the reticle from showing the current hit-test result after placement
+                        reticle.components.ar.target = null;
+                        reticle.setAttribute('visible', 'false');
+                    }
+                });
+            }
+        });
+    </script>
+</head>
+<body>
+    <a-scene 
+        webxr="requiredFeatures: hit-test;" 
+        ball-placement
+        background="color: #FAFAFA">
+        
+        <a-camera></a-camera>
+
+        <a-ring id="reticle" 
+                color="#FFFFFF" 
+                radius="0.1" 
+                opacity="0.5"
+                rotation="-90 0 0"
+                ar-hit-test></a-ring>
+
+        <a-sphere id="testBall" 
+                  radius="0.3" 
+                  color="turquoise" 
+                  shadow></a-sphere>
+
+    </a-scene>
+</body>
+</html>
