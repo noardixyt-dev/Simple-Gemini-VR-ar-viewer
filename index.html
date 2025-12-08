@@ -1,53 +1,169 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebXR AR Hit-Test Mixed Reality</title>
+    <title>Mixed Reality VR Passthrough App</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     
+    <style>
+        /* Style for the fullscreen button */
+        #vrButtonContainer {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            transition: opacity 1s ease-in-out; /* CSS transition for fade effect */
+        }
+        .a-enter-vr-button {
+            /* Basic styling for the A-Frame button to make it visible */
+            background-color: #008CBA;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+        }
+    </style>
+
     <script>
-        // Custom component to handle placement logic after a surface is found
-        AFRAME.registerComponent('ball-placement', {
+        // === Custom A-Frame Component for AR Passthrough in VR Mode ===
+        // This component requests camera access and sets it as the VR background.
+        AFRAME.registerComponent('vr-rear-camera-passthrough', {
             init: function () {
+                const scene = this.el.sceneEl;
+                
+                // Only run this logic when in an immersive (VR) session
+                scene.addEventListener('enter-vr', () => {
+                    // 1. Check if the scene is in VR (immersive-vr) mode
+                    if (scene.is('vr-mode')) {
+                        const video = document.createElement('video');
+                        video.setAttribute('autoplay', 'true');
+                        video.setAttribute('playsinline', 'true'); // Required for iOS
+                        video.style.display = 'none';
+                        document.body.appendChild(video);
+
+                        // 2. Request rear camera access
+                        navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'environment' }
+                        })
+                        .then((stream) => {
+                            video.srcObject = stream;
+                            video.onloadedmetadata = () => {
+                                video.play();
+                                
+                                // 3. Set the live video as the A-Frame scene's background
+                                const texture = new THREE.VideoTexture(video);
+                                scene.object3D.background = texture;
+                            };
+                        })
+                        .catch((err) => {
+                            console.error("Camera access failed:", err);
+                            // Fallback to a black background or show an error model
+                            scene.object3D.background = new THREE.Color(0x000000);
+                        });
+                    }
+                });
+
+                // Clear the background when exiting VR
+                scene.addEventListener('exit-vr', () => {
+                    scene.object3D.background = new THREE.Color(0xFAFAFA); // Standard A-Frame color
+                });
+            }
+        });
+
+        // === Custom Component for Button Fade and Interaction ===
+        AFRAME.registerComponent('fade-button-logic', {
+            init: function () {
+                const buttonContainer = document.getElementById('vrButtonContainer');
+                const scene = this.el.sceneEl;
+                let hideTimeout;
+
+                const hideButton = () => {
+                    buttonContainer.style.opacity = '0';
+                    buttonContainer.style.pointerEvents = 'none';
+                };
+
+                const showButton = () => {
+                    clearTimeout(hideTimeout);
+                    buttonContainer.style.opacity = '1';
+                    buttonContainer.style.pointerEvents = 'auto';
+
+                    // Set timeout to hide the button after 10 seconds
+                    hideTimeout = setTimeout(hideButton, 10000); // 10000ms = 10s
+                };
+
+                // Initially hide the button after 5 seconds
+                setTimeout(hideButton, 5000);
+
+                // Re-show the button on screen tap/touch (anywhere on the scene)
+                scene.addEventListener('touchstart', showButton);
+                scene.addEventListener('mousedown', showButton);
+            }
+        });
+
+        // === Custom Component for Test Ball Placement using AR Tracking in VR Passthrough ===
+        AFRAME.registerComponent('ar-tracking-placement', {
+            init: function () {
+                const testBall = document.getElementById('testBall');
+                testBall.setAttribute('visible', 'false'); // Hide ball initially
+
+                // Get the A-Frame reticle that handles hit-testing
+                const reticle = document.getElementById('reticle');
+
+                this.el.sceneEl.addEventListener('enter-vr', () => {
+                    // Only enable AR placement if we are in an immersive session that supports hit-test
+                    if (this.el.sceneEl.is('vr-mode')) {
+                         reticle.setAttribute('visible', 'true');
+                         
+                        // Listen for a click/tap (equivalent to 'select' in WebXR)
+                        this.el.sceneEl.addEventListener('select', this.placeObject.bind(this));
+                    }
+                });
+                
+                this.el.sceneEl.addEventListener('exit-vr', () => {
+                    reticle.setAttribute('visible', 'false');
+                    this.el.sceneEl.removeEventListener('select', this.placeObject.bind(this));
+                });
+            },
+
+            placeObject: function (evt) {
                 const reticle = document.getElementById('reticle');
                 const testBall = document.getElementById('testBall');
                 
-                // Hide the test ball until it's placed
-                testBall.setAttribute('visible', 'false');
-
-                // Listen for when a surface is found and the reticle is positioned
-                reticle.addEventListener('ar-hit-test-achieved', function (evt) {
-                    // Reticle is now visible and tracking a real-world surface
-                });
-
-                // Listen for a tap (select event) to place the ball
-                this.el.sceneEl.addEventListener('select', function (evt) {
-                    if (reticle.components.ar.target) {
-                        // Place the ball at the reticle's last known position
-                        testBall.setAttribute('position', reticle.getAttribute('position'));
-                        testBall.setAttribute('visible', 'true');
-                        
-                        // Stop the reticle from showing the current hit-test result after placement
-                        reticle.components.ar.target = null;
-                        reticle.setAttribute('visible', 'false');
-                    }
-                });
+                // Check if the reticle has found a valid surface (target is set by the ar-hit-test component)
+                if (reticle.components['ar-hit-test'].target) {
+                    // Place the ball at the reticle's last known position
+                    testBall.setAttribute('position', reticle.getAttribute('position'));
+                    testBall.setAttribute('visible', 'true');
+                    
+                    // Hide the reticle after placement
+                    reticle.setAttribute('visible', 'false');
+                    reticle.components['ar-hit-test'].target = null;
+                }
             }
         });
     </script>
 </head>
 <body>
     <a-scene 
-        webxr="requiredFeatures: hit-test;" 
-        ball-placement
-        background="color: #FAFAFA">
+        webxr="requiredFeatures: hit-test, local-floor;" 
+        vr-rear-camera-passthrough
+        fade-button-logic
+        ar-tracking-placement>
         
         <a-camera></a-camera>
 
         <a-ring id="reticle" 
                 color="#FFFFFF" 
                 radius="0.1" 
-                opacity="0.5"
+                opacity="0.7"
                 rotation="-90 0 0"
+                visible="false"
                 ar-hit-test></a-ring>
 
         <a-sphere id="testBall" 
@@ -56,5 +172,9 @@
                   shadow></a-sphere>
 
     </a-scene>
+
+    <div id="vrButtonContainer">
+        </div>
 </body>
 </html>
+a
