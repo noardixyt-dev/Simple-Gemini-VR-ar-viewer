@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebAR glTF Viewer & VR</title>
+    <title>WebAR/VR glTF Viewer</title>
     
     <style>
         body {
@@ -12,33 +11,20 @@
             overflow: hidden;
             font-family: sans-serif;
             background-color: #f0f0f0;
-            /* Attempt to enforce landscape orientation on mobile */
-            /* Note: Actual enforcement depends on browser/OS support */
-            transform: rotate(90deg);
-            transform-origin: left top;
-            width: 100vh;
-            height: 100vw;
-            position: absolute;
-            top: 100%;
-            left: 0;
+            /* No CSS hacks for orientation. We will use the Screen Orientation API in JS. */
         }
 
-        /* Adjustments for landscape orientation */
+        /* Full viewport coverage */
         #container {
             position: fixed;
             top: 0;
             left: 0;
             width: 100vw;
             height: 100vh;
-            /* Reset transform for the container itself if needed */
-            transform: rotate(-90deg);
-            transform-origin: 50% 50%;
-            width: 100vw;
-            height: 100vh;
         }
 
-        /* Style and position UI elements on top of the canvas */
-        .ui-button, #gltf-file-input, #fullscreen-button {
+        /* Style and position UI elements */
+        .ui-button, #gltf-file-input {
             position: absolute;
             z-index: 10;
             background: rgba(255, 255, 255, 0.9);
@@ -49,12 +35,12 @@
             font-size: 16px;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            transition: opacity 0.3s ease, background 0.3s ease, color 0.3s ease;
+            transition: opacity 0.3s ease, background 0.3s ease;
             left: 50%;
             transform: translateX(-50%);
             white-space: nowrap;
         }
-        .ui-button:hover, #fullscreen-button:hover {
+        .ui-button:hover {
             background: #007bff;
             color: white;
             box-shadow: 0 6px 8px rgba(0, 0, 0, 0.2);
@@ -71,12 +57,20 @@
             right: 20px;
             transform: none;
             opacity: 1;
+            /* We use opacity and pointer-events to handle the auto-hide */
+            pointer-events: auto;
+            border: 2px solid orange;
+            color: orange;
+        }
+        #fullscreen-button:hover {
+            background: orange;
+            color: white;
         }
     </style>
 </head>
 <body>
     <input type="file" id="gltf-file-input" accept=".gltf, .glb">
-    <button id="ar-button" class="ui-button">Start AR Viewer</button>
+    <button id="ar-button" class="ui-button">Start AR Session</button>
     <button id="stereo-button" class="ui-button">View in Stereo VR</button>
     <button id="fullscreen-button" class="ui-button">Fullscreen</button>
 
@@ -101,11 +95,14 @@
 
         // --- 1. Initialization ---
         function init() {
+            // Lock screen to landscape (optional, but highly recommended for VR/AR)
+            lockScreenOrientation();
+
             // Scene and Camera Setup
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            // Lighting (Essential for PBR models like glTF)
+            // Lighting 
             scene.add(new THREE.AmbientLight(0xffffff, 1.0));
             scene.add(new THREE.DirectionalLight(0xffffff, 3.0));
 
@@ -113,14 +110,26 @@
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // Enable WebXR for AR/VR
+            renderer.xr.enabled = true; // Enable WebXR
             container.appendChild(renderer.domElement);
 
             window.addEventListener('resize', onWindowResize);
             
-            setupFullscreenLogic(); // Setup the timed fullscreen button logic
+            setupFullscreenLogic(); 
             animate();
         }
+
+        // Requests the device to lock the screen to landscape-primary
+        function lockScreenOrientation() {
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('landscape-primary')
+                    .then(() => console.log('Screen orientation locked to landscape.'))
+                    .catch((err) => console.warn('Could not lock orientation:', err));
+            } else {
+                console.warn('Screen Orientation API not supported/available for locking.');
+            }
+        }
+
 
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -146,11 +155,9 @@
                     gltfModel.position.set(0, 0, 0); 
                     scene.add(gltfModel);
                     
-                    // Show mode toggle button after model is ready
                     stereoButton.style.display = 'block'; 
                     stereoButton.textContent = 'View in Stereo VR';
                     isStereoMode = false;
-
                     console.log('Model loaded successfully.');
                 }, undefined, (error) => {
                     console.error('An error happened while loading the model:', error);
@@ -168,21 +175,25 @@
             }
 
             try {
-                // Request 'immersive-ar' session. This uses the back camera.
+                // Request 'immersive-ar' session. This is the back camera AR magic window.
                 arSession = await navigator.xr.requestSession('immersive-ar', {
                     requiredFeatures: ['local'], 
                 });
 
                 renderer.xr.setSession(arSession);
 
-                // Hide UI buttons during AR session
+                // Hide model loading/start buttons
                 fileInput.style.display = 'none';
                 arButton.style.display = 'none';
-                fullscreenButton.style.display = 'block'; // Show fullscreen button
+                stereoButton.style.display = 'block'; 
+                
+                // Show fullscreen button and start timer
+                showFullscreenButton();
 
-                // Initial model placement 1 meter in front
+                // Initial model placement 1 meter in front (if not placed yet)
                 if (gltfModel && gltfModel.position.length() === 0) {
-                    gltfModel.position.set(0, 0, -1);
+                    // This position is relative to the AR camera, providing stabilization.
+                    gltfModel.position.set(0, 0, -1); 
                 }
 
                 arSession.addEventListener('end', () => {
@@ -193,23 +204,25 @@
                     fullscreenButton.style.display = 'none';
                 });
 
-                console.log('AR Session started. Look around to stabilize.');
+                console.log('AR Session started. Tracking will stabilize automatically.');
 
             } catch (e) {
                 console.error('Failed to start AR Session:', e);
-                alert('AR initialization failed. Ensure your browser is up to date.');
+                alert('AR initialization failed. Ensure your browser is up to date and ARCore/ARKit is supported.');
             }
         });
 
         // --- 4. Stereo/Mono AR Mode Toggle ---
         stereoButton.addEventListener('click', () => {
             isStereoMode = !isStereoMode;
-            stereoButton.textContent = isStereoMode ? 'Exit Stereo VR' : 'View in Stereo VR';
+            stereoButton.textContent = isStereoMode ? 'Exit Stereo AR' : 'View in Stereo AR';
             
-            // Toggle visibility of other UI elements in VR mode
+            // Toggle visibility of fullscreen button
+            fullscreenButton.style.display = isStereoMode ? 'none' : 'block';
+            
+            // Hide the other main buttons in stereo mode
             fileInput.style.display = isStereoMode ? 'none' : 'block';
             arButton.style.display = isStereoMode ? 'none' : 'block';
-            fullscreenButton.style.display = isStereoMode ? 'none' : 'block'; // Hide for clarity in VR mode
             
             onWindowResize(); 
         });
@@ -219,44 +232,46 @@
         function requestFullscreen() {
             if (document.documentElement.requestFullscreen) {
                 document.documentElement.requestFullscreen();
-            } else if (document.documentElement.webkitRequestFullscreen) { /* Safari */
+            } else if (document.documentElement.webkitRequestFullscreen) {
                 document.documentElement.webkitRequestFullscreen();
-            } else if (document.documentElement.msRequestFullscreen) { /* IE11 */
-                document.documentElement.msRequestFullscreen();
             }
-            // Hide the button immediately after use
             hideFullscreenButton();
+            fullscreenButton.textContent = 'Exit Fullscreen';
+            fullscreenButton.onclick = exitFullscreen;
         }
 
         function exitFullscreen() {
             if (document.exitFullscreen) {
                 document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) { /* Safari */
+            } else if (document.webkitExitFullscreen) {
                 document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) { /* IE11 */
-                document.msExitFullscreen();
             }
+            fullscreenButton.textContent = 'Fullscreen';
+            fullscreenButton.onclick = requestFullscreen;
+            showFullscreenButton(); // Show it upon exiting
         }
 
         function hideFullscreenButton() {
+            clearTimeout(fullscreenTimer); 
             fullscreenButton.style.opacity = '0';
-            fullscreenButton.style.pointerEvents = 'none'; // Make it unclickable when invisible
+            fullscreenButton.style.pointerEvents = 'none';
         }
 
         function showFullscreenButton() {
-            fullscreenButton.style.opacity = '1';
-            fullscreenButton.style.pointerEvents = 'auto'; // Make it clickable again
+            if (arSession && !isStereoMode) { // Only show in Mono AR mode
+                fullscreenButton.style.display = 'block';
+                fullscreenButton.style.opacity = '1';
+                fullscreenButton.style.pointerEvents = 'auto';
 
-            // Clear any existing timer
-            clearTimeout(fullscreenTimer); 
-            // Set new timer to hide it after 10 seconds
-            fullscreenTimer = setTimeout(hideFullscreenButton, 10000); // 10 seconds
+                clearTimeout(fullscreenTimer); 
+                // Set new timer to hide it after 10 seconds
+                fullscreenTimer = setTimeout(hideFullscreenButton, 10000); 
+            }
         }
 
         function setupFullscreenLogic() {
-            // Initial hide (will be shown after AR starts)
             fullscreenButton.style.display = 'none'; 
-            fullscreenButton.addEventListener('click', requestFullscreen);
+            fullscreenButton.onclick = requestFullscreen;
 
             // Logic to reappear when top-right corner is pressed/touched
             container.addEventListener('touchstart', (event) => {
@@ -264,16 +279,13 @@
                 const width = window.innerWidth;
                 const height = window.innerHeight;
                 
-                // Define the top-right corner area (e.g., top 30% and right 30%)
+                // Check if touch is in the top-right quadrant (e.g., top 30% and right 30%)
                 const isTopRight = touch.clientX > width * 0.7 && touch.clientY < height * 0.3;
 
                 if (isTopRight && arSession && !isStereoMode) {
                     showFullscreenButton();
                 }
             });
-
-             // Start the timer when the app loads (it will re-hide itself after AR starts)
-             fullscreenTimer = setTimeout(hideFullscreenButton, 10000);
         }
 
 
@@ -309,7 +321,7 @@
                 camera.position.x = 0;
                 renderer.setScissorTest(false);
             } else {
-                // --- Normal AR/Monoscopic Rendering ---
+                // --- Normal AR/Monoscopic Rendering (Handled by WebXR when in session) ---
                 renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
                 renderer.render(scene, camera);
             }
