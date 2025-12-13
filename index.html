@@ -1,180 +1,232 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Mixed Reality VR Passthrough App</title>
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAR glTF Viewer & VR</title>
     
     <style>
-        /* Style for the fullscreen button */
-        #vrButtonContainer {
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: sans-serif;
+            background-color: #f0f0f0;
+        }
+        /* Ensure the canvas fills the entire viewport */
+        #container {
             position: fixed;
-            bottom: 20px;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+        /* Style and position UI elements on top of the canvas */
+        .ui-button, #gltf-file-input {
+            position: absolute;
+            z-index: 10;
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px solid #007bff;
+            color: #007bff;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 1000;
-            transition: opacity 1s ease-in-out; /* CSS transition for fade effect */
+            white-space: nowrap;
         }
-        .a-enter-vr-button {
-            /* Basic styling for the A-Frame button to make it visible */
-            background-color: #008CBA;
+        .ui-button:hover {
+            background: #007bff;
             color: white;
-            border: none;
-            padding: 10px 20px;
-            text-align: center;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 16px;
-            cursor: pointer;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.2);
         }
+        #gltf-file-input { top: 20px; color: black; border-color: #ccc; }
+        #ar-button { top: 90px; }
+        #stereo-button { top: 160px; display: none; } /* Hidden until model loads */
     </style>
-
-    <script>
-        // === Custom A-Frame Component for AR Passthrough in VR Mode ===
-        // This component requests camera access and sets it as the VR background.
-        AFRAME.registerComponent('vr-rear-camera-passthrough', {
-            init: function () {
-                const scene = this.el.sceneEl;
-                
-                // Only run this logic when in an immersive (VR) session
-                scene.addEventListener('enter-vr', () => {
-                    // 1. Check if the scene is in VR (immersive-vr) mode
-                    if (scene.is('vr-mode')) {
-                        const video = document.createElement('video');
-                        video.setAttribute('autoplay', 'true');
-                        video.setAttribute('playsinline', 'true'); // Required for iOS
-                        video.style.display = 'none';
-                        document.body.appendChild(video);
-
-                        // 2. Request rear camera access
-                        navigator.mediaDevices.getUserMedia({
-                            video: { facingMode: 'environment' }
-                        })
-                        .then((stream) => {
-                            video.srcObject = stream;
-                            video.onloadedmetadata = () => {
-                                video.play();
-                                
-                                // 3. Set the live video as the A-Frame scene's background
-                                const texture = new THREE.VideoTexture(video);
-                                scene.object3D.background = texture;
-                            };
-                        })
-                        .catch((err) => {
-                            console.error("Camera access failed:", err);
-                            // Fallback to a black background or show an error model
-                            scene.object3D.background = new THREE.Color(0x000000);
-                        });
-                    }
-                });
-
-                // Clear the background when exiting VR
-                scene.addEventListener('exit-vr', () => {
-                    scene.object3D.background = new THREE.Color(0xFAFAFA); // Standard A-Frame color
-                });
-            }
-        });
-
-        // === Custom Component for Button Fade and Interaction ===
-        AFRAME.registerComponent('fade-button-logic', {
-            init: function () {
-                const buttonContainer = document.getElementById('vrButtonContainer');
-                const scene = this.el.sceneEl;
-                let hideTimeout;
-
-                const hideButton = () => {
-                    buttonContainer.style.opacity = '0';
-                    buttonContainer.style.pointerEvents = 'none';
-                };
-
-                const showButton = () => {
-                    clearTimeout(hideTimeout);
-                    buttonContainer.style.opacity = '1';
-                    buttonContainer.style.pointerEvents = 'auto';
-
-                    // Set timeout to hide the button after 10 seconds
-                    hideTimeout = setTimeout(hideButton, 10000); // 10000ms = 10s
-                };
-
-                // Initially hide the button after 5 seconds
-                setTimeout(hideButton, 5000);
-
-                // Re-show the button on screen tap/touch (anywhere on the scene)
-                scene.addEventListener('touchstart', showButton);
-                scene.addEventListener('mousedown', showButton);
-            }
-        });
-
-        // === Custom Component for Test Ball Placement using AR Tracking in VR Passthrough ===
-        AFRAME.registerComponent('ar-tracking-placement', {
-            init: function () {
-                const testBall = document.getElementById('testBall');
-                testBall.setAttribute('visible', 'false'); // Hide ball initially
-
-                // Get the A-Frame reticle that handles hit-testing
-                const reticle = document.getElementById('reticle');
-
-                this.el.sceneEl.addEventListener('enter-vr', () => {
-                    // Only enable AR placement if we are in an immersive session that supports hit-test
-                    if (this.el.sceneEl.is('vr-mode')) {
-                         reticle.setAttribute('visible', 'true');
-                         
-                        // Listen for a click/tap (equivalent to 'select' in WebXR)
-                        this.el.sceneEl.addEventListener('select', this.placeObject.bind(this));
-                    }
-                });
-                
-                this.el.sceneEl.addEventListener('exit-vr', () => {
-                    reticle.setAttribute('visible', 'false');
-                    this.el.sceneEl.removeEventListener('select', this.placeObject.bind(this));
-                });
-            },
-
-            placeObject: function (evt) {
-                const reticle = document.getElementById('reticle');
-                const testBall = document.getElementById('testBall');
-                
-                // Check if the reticle has found a valid surface (target is set by the ar-hit-test component)
-                if (reticle.components['ar-hit-test'].target) {
-                    // Place the ball at the reticle's last known position
-                    testBall.setAttribute('position', reticle.getAttribute('position'));
-                    testBall.setAttribute('visible', 'true');
-                    
-                    // Hide the reticle after placement
-                    reticle.setAttribute('visible', 'false');
-                    reticle.components['ar-hit-test'].target = null;
-                }
-            }
-        });
-    </script>
 </head>
 <body>
-    <a-scene 
-        webxr="requiredFeatures: hit-test, local-floor;" 
-        vr-rear-camera-passthrough
-        fade-button-logic
-        ar-tracking-placement>
-        
-        <a-camera></a-camera>
+    <input type="file" id="gltf-file-input" accept=".gltf, .glb">
+    <button id="ar-button" class="ui-button">Start AR Viewer</button>
+    <button id="stereo-button" class="ui-button">View in Stereo VR</button>
 
-        <a-ring id="reticle" 
-                color="#FFFFFF" 
-                radius="0.1" 
-                opacity="0.7"
-                rotation="-90 0 0"
-                visible="false"
-                ar-hit-test></a-ring>
+    <div id="container"></div>
 
-        <a-sphere id="testBall" 
-                  radius="0.3" 
-                  color="turquoise" 
-                  shadow></a-sphere>
+    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
 
-    </a-scene>
+    <script>
+        // --- Global Variables ---
+        const container = document.getElementById('container');
+        const fileInput = document.getElementById('gltf-file-input');
+        const arButton = document.getElementById('ar-button');
+        const stereoButton = document.getElementById('stereo-button');
 
-    <div id="vrButtonContainer">
-        </div>
+        let camera, scene, renderer, gltfModel;
+        let arSession = null;
+        let isStereoMode = false;
+        const ipd = 0.065; // Interpupillary Distance (65mm) for stereo effect
+
+        // --- 1. Initialization ---
+        function init() {
+            // Scene and Camera Setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            // Lighting (Essential for PBR models like glTF)
+            scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+            scene.add(new THREE.DirectionalLight(0xffffff, 3.0));
+
+            // Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true; // Enable WebXR for AR/VR
+            container.appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 2. glTF Model Loading ---
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const loader = new THREE.GLTFLoader();
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                loader.parse(e.target.result, '', (gltf) => {
+                    // Remove previous model if one exists
+                    if (gltfModel) {
+                        scene.remove(gltfModel);
+                    }
+
+                    gltfModel = gltf.scene;
+                    gltfModel.scale.set(0.1, 0.1, 0.1); // Default scale
+                    gltfModel.position.set(0, 0, 0); // Reset position
+                    scene.add(gltfModel);
+                    
+                    stereoButton.style.display = 'block'; 
+                    console.log('Model loaded successfully.');
+                }, undefined, (error) => {
+                    console.error('An error happened while loading the model:', error);
+                    alert('Error loading model. Check console for details.');
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // --- 3. AR Initialization (WebXR) ---
+        arButton.addEventListener('click', async () => {
+            if (!navigator.xr) {
+                alert('WebXR not supported on this device/browser.');
+                return;
+            }
+
+            try {
+                // Request an immersive AR session
+                arSession = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['local', 'hit-test'], // 'local' is needed for world tracking (stabilization)
+                });
+
+                // Start the Three.js XR management
+                renderer.xr.setSession(arSession);
+
+                // Hide UI buttons during AR session
+                fileInput.style.display = 'none';
+                arButton.style.display = 'none';
+                stereoButton.style.display = 'none'; 
+                
+                // Set default model placement 1 meter in front of the starting camera
+                if (gltfModel && gltfModel.position.length() === 0) {
+                    gltfModel.position.set(0, 0, -1);
+                }
+
+                arSession.addEventListener('end', () => {
+                    // Reset UI when session ends
+                    fileInput.style.display = 'block';
+                    arButton.style.display = 'block';
+                    if(gltfModel) stereoButton.style.display = 'block';
+                    isStereoMode = false;
+                });
+
+                console.log('AR Session started. Look around to stabilize.');
+
+            } catch (e) {
+                console.error('Failed to start AR Session:', e);
+                alert('AR initialization failed. Ensure your browser is up to date and your environment is lit.');
+            }
+        });
+
+        // --- 4. Stereo VR Mode Toggle ---
+        stereoButton.addEventListener('click', () => {
+            isStereoMode = !isStereoMode;
+            stereoButton.textContent = isStereoMode ? 'Exit Stereo VR' : 'View in Stereo VR';
+            
+            // Re-hide/show UI elements based on mode
+            fileInput.style.display = isStereoMode ? 'none' : 'block';
+            arButton.style.display = isStereoMode ? 'none' : 'block';
+
+            onWindowResize(); // Re-render the canvas
+        });
+
+
+        // --- 5. The Render Loop (Handles AR and Custom Stereo Output) ---
+        function animate() {
+            // This tells Three.js to run the render function every frame.
+            renderer.setAnimationLoop(render); 
+        }
+
+        function render() {
+            if (isStereoMode) {
+                // --- Manual Stereo Rendering for VR Viewer (Cardboard) ---
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+
+                // 1. Render Left Eye (Viewport: left half of the screen)
+                renderer.setViewport(0, 0, width / 2, height);
+                renderer.setScissor(0, 0, width / 2, height);
+                renderer.setScissorTest(true);
+
+                // Shift camera left by half IPD
+                camera.position.x = -ipd / 2;
+                camera.updateProjectionMatrix();
+                renderer.render(scene, camera);
+
+                // 2. Render Right Eye (Viewport: right half of the screen)
+                renderer.setViewport(width / 2, 0, width / 2, height);
+                renderer.setScissor(width / 2, 0, width / 2, height);
+
+                // Shift camera right by half IPD
+                camera.position.x = ipd / 2;
+                camera.updateProjectionMatrix();
+                renderer.render(scene, camera);
+
+                // Reset camera position for the next frame
+                camera.position.x = 0;
+                renderer.setScissorTest(false);
+            } else {
+                // --- Normal AR/Monoscopic Rendering ---
+                // If in AR session, the renderer.xr.enabled handles camera tracking/stabilization.
+                // If not in AR, it's just a regular 3D viewer.
+                renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+                renderer.render(scene, camera);
+            }
+        }
+
+        // --- Start the app ---
+        init();
+    </script>
 </body>
 </html>
-a
