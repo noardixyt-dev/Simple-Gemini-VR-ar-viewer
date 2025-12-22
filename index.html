@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Scratch-Built 6DoF Stereo</title>
+    <title>Stereo VIO AR Engine</title>
     <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR@master/dist/alva_ar.js"></script>
     <script type="importmap">
         {
@@ -14,134 +14,136 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #video-view { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; pointer-events: none; }
-        #three-canvas { position: absolute; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
-        #ui { position: absolute; inset: 0; z-index: 100; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #00e5ff; }
-        .btn { background: #00e5ff; color: #000; padding: 25px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.2rem; box-shadow: 0 0 20px #00e5ff; }
-        #status { position: absolute; top: 20px; width: 100%; text-align: center; color: #00e5ff; z-index: 200; font-weight: bold; text-shadow: 2px 2px black; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; color: #00e5ff; }
+        #three-canvas { position: absolute; inset: 0; z-index: 10; }
+        #ui { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .btn { background: #00e5ff; color: #000; padding: 20px 45px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; box-shadow: 0 0 25px rgba(0,229,255,0.5); }
+        
+        /* Landscape Lockdown CSS */
+        #rotate-overlay { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        @media (orientation: portrait) { #rotate-overlay { display: flex; } }
+        .phone-icon { width: 50px; height: 90px; border: 3px solid #00e5ff; border-radius: 5px; animation: rot 2s infinite; margin-bottom: 20px; }
+        @keyframes rot { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
     </style>
 </head>
 <body>
-    <video id="video-view" autoplay muted playsinline></video>
+    <div id="rotate-overlay">
+        <div class="phone-icon"></div>
+        <h2>ROTATE TO LANDSCAPE</h2>
+        <p>Stereo AR requires wide-view mode</p>
+    </div>
+
     <canvas id="three-canvas"></canvas>
     
-    <div id="status">SENSOR STANDBY</div>
-    
     <div id="ui">
-        <h1>6DoF STEREO ENGINE</h1>
-        <p>Align phone in headset & press start</p>
-        <button class="btn" id="startBtn">ENGAGE VIO</button>
+        <h1>VIO STEREO SYSTEM</h1>
+        <p id="msg">Awaiting Permissions...</p>
+        <button class="btn" id="startBtn">START ENGINE</button>
     </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let alva, scene, renderer, video, cameraL, cameraR;
-        let trackCanvas, trackCtx;
+        let alva, scene, bgScene, renderer, video, cameraL, cameraR, bgCamera;
+        let trackCanvas, trackCtx, videoTexture;
         let deviceRot = new THREE.Quaternion();
         const IPD = 0.064; 
 
-        async function boot() {
-            // 1. Request Motion Sensors (Rotation)
+        async function init() {
+            // 1. Fullscreen & Orientation Lock (Android/Chrome)
+            try {
+                if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+                if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+            } catch (e) { console.warn("Lock failed - using CSS fallback."); }
+
+            // 2. Camera Setup
+            video = document.createElement('video');
+            video.autoplay = video.muted = video.playsInline = true;
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } } 
+            });
+            video.srcObject = stream;
+            await video.play();
+
+            // 3. Tracking Setup (720p math buffer)
+            trackCanvas = document.createElement('canvas');
+            trackCanvas.width = 1280; trackCanvas.height = 720;
+            trackCtx = trackCanvas.getContext('2d');
+            alva = await AlvaAR.Initialize(1280, 720);
+
+            // 4. Sensor Permission (Inertial Odometry)
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 await DeviceOrientationEvent.requestPermission();
             }
-            window.addEventListener('deviceorientation', handleRotation);
+            window.addEventListener('deviceorientation', (e) => {
+                const alpha = THREE.MathUtils.degToRad(e.alpha);
+                const beta = THREE.MathUtils.degToRad(e.beta);
+                const gamma = THREE.MathUtils.degToRad(e.gamma);
+                const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
+                const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+                deviceRot.setFromEuler(euler);
+                deviceRot.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient));
+            });
 
-            // 2. Request Highest Camera Feed
-            video = document.getElementById('video-view');
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } } 
-                });
-                video.srcObject = stream;
-                await video.play();
-                
-                // 3. Setup Tracking (720p for the math engine)
-                trackCanvas = document.createElement('canvas');
-                trackCanvas.width = 1280; trackCanvas.height = 720;
-                trackCtx = trackCanvas.getContext('2d', { alpha: false });
-
-                alva = await AlvaAR.Initialize(1280, 720);
-                
-                init3D();
-                document.getElementById('ui').style.display = 'none';
-                document.getElementById('status').innerText = "CALIBRATING: Pan phone slowly...";
-                animate();
-            } catch (e) {
-                alert("Camera Access Required: " + e.message);
-            }
+            setupThree();
+            document.getElementById('ui').style.display = 'none';
+            animate();
         }
 
-        function handleRotation(e) {
-            const alpha = THREE.MathUtils.degToRad(e.alpha);
-            const beta = THREE.MathUtils.degToRad(e.beta);
-            const gamma = THREE.MathUtils.degToRad(e.gamma);
-            const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
-
-            const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-            deviceRot.setFromEuler(euler);
-            const align = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient);
-            deviceRot.multiply(align);
-        }
-
-        function init3D() {
+        function setupThree() {
             const canvas = document.getElementById('three-canvas');
-            scene = new THREE.Scene();
-            renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.autoClear = false;
 
+            // Stereo Background Setup
+            bgScene = new THREE.Scene();
+            bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            videoTexture = new THREE.VideoTexture(video);
+            const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false }));
+            bgScene.add(bgMesh);
+
+            // 3D Model Scene Setup
+            scene = new THREE.Scene();
             const aspect = (window.innerWidth / 2) / window.innerHeight;
             cameraL = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
             cameraR = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 4));
-            
-            new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (gltf) => {
-                const model = gltf.scene;
-                model.position.set(0, -0.5, -2);
-                scene.add(model);
+            new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (g) => {
+                g.scene.position.set(0, -0.5, -2);
+                scene.add(g.scene);
             });
         }
 
         function animate() {
             requestAnimationFrame(animate);
-
-            // Feed the math engine
             trackCtx.drawImage(video, 0, 0, 1280, 720);
             const pose = alva.findCameraPose(trackCanvas);
 
             if (pose) {
-                document.getElementById('status').innerText = "TRACKING LOCKED";
                 const mat = new THREE.Matrix4().fromArray(pose);
-                const position = new THREE.Vector3().setFromMatrixPosition(mat);
-                
-                // LEFT EYE: Fusion of Pose Position + Sensor Rotation
-                cameraL.position.copy(position);
-                cameraL.quaternion.copy(deviceRot);
-                cameraL.translateX(-IPD / 2);
-
-                // RIGHT EYE: Fusion of Pose Position + Sensor Rotation
-                cameraR.position.copy(position);
-                cameraR.quaternion.copy(deviceRot);
-                cameraR.translateX(IPD / 2);
+                const pos = new THREE.Vector3().setFromMatrixPosition(mat);
+                cameraL.position.copy(pos); cameraL.quaternion.copy(deviceRot); cameraL.translateX(-IPD/2);
+                cameraR.position.copy(pos); cameraR.quaternion.copy(deviceRot); cameraR.translateX(IPD/2);
             }
 
             const w = window.innerWidth, h = window.innerHeight;
             renderer.clear();
-            
-            renderer.setViewport(0, 0, w / 2, h);
+
+            // Left Eye
+            renderer.setViewport(0, 0, w/2, h);
+            renderer.render(bgScene, bgCamera);
             renderer.render(scene, cameraL);
 
-            renderer.setViewport(w / 2, 0, w / 2, h);
+            // Right Eye
+            renderer.setViewport(w/2, 0, w/2, h);
+            renderer.render(bgScene, bgCamera);
             renderer.render(scene, cameraR);
         }
 
-        document.getElementById('startBtn').onclick = boot;
+        document.getElementById('startBtn').onclick = init;
     </script>
 </body>
 </html>
