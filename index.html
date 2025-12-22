@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Alva 6DoF Stereo Engine</title>
-    <script src="https://cdn.jsdelivr.net/gh/alvacoda/alva_ar@main/dist/alva_ar.js"></script>
+    <title>Fixed Alva 6DoF Stereo</title>
+    <script src="https://cdn.jsdelivr.net/gh/alvacoda/alvacoda_ar@1.0.0/dist/alva_ar.js"></script>
     <script type="importmap">
         {
             "imports": {
@@ -13,115 +13,111 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        #ui { position: absolute; z-index: 10; padding: 20px; color: #00e5ff; }
-        .lens { position: absolute; border: 2px solid rgba(0,229,255,0.3); border-radius: 50%; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #overlay { position: absolute; z-index: 100; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: flex; align-items: center; justify-content: center; }
+        .btn { background: #00e5ff; color: #000; padding: 20px; border-radius: 10px; font-weight: bold; cursor: pointer; border: none; }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <label style="background:#00e5ff; color:#000; padding:10px; border-radius:5px; font-weight:bold;">
-            LOAD GLB <input type="file" id="file" accept=".glb" style="display:none">
-        </label>
-        <p id="status">Scanning Floor...</p>
-    </div>
+    <div id="overlay"><button class="btn" id="startBtn">START AR ENGINE</button></div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let scene, renderer, video, alva, model;
-        let cameraL, cameraR; 
-        const IPD = 0.064; // Standard eye separation in meters
+        let alva, scene, renderer, video, model, videoTex;
+        let cameraL, cameraR;
+        const IPD = 0.064; // Distance between eyes
 
         async function init() {
-            // 1. Start Camera
+            // 1. Camera setup with explicit wait
             video = document.createElement('video');
-            video.srcObject = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: 720, height: 720 } 
+            video.setAttribute('autoplay', '');
+            video.setAttribute('muted', '');
+            video.setAttribute('playsinline', '');
+            
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
             });
-            await video.play();
+            video.srcObject = stream;
+            
+            // Wait for video to actually start playing
+            await new Promise((resolve) => video.onloadedmetadata = resolve);
+            video.play();
 
-            // 2. Setup AlvaAR (SLAM)
-            const config = { width: 720, height: 720 };
-            alva = await AlvaAR.Initialize(config);
+            // 2. Initialize AlvaAR SLAM
+            // We use the video dimensions for the tracker
+            alva = await AlvaAR.Initialize(video.videoWidth, video.videoHeight);
 
-            // 3. Three.js Core
+            // 3. Three.js Setup
             scene = new THREE.Scene();
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
-
-            // Two Cameras for True Depth
-            cameraL = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
-            cameraR = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
-
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.autoClear = false;
             document.body.appendChild(renderer.domElement);
 
-            // 4. Background Video Plane
+            // Stereoscopic Cameras
+            const aspect = (window.innerWidth / 2) / window.innerHeight;
+            cameraL = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            cameraR = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+
+            // Background Video Feed (Must be visible in both eyes)
+            videoTex = new THREE.VideoTexture(video);
             const bgGeo = new THREE.PlaneGeometry(2, 2);
-            const videoTex = new THREE.VideoTexture(video);
             const bgMat = new THREE.MeshBasicMaterial({ map: videoTex, depthTest: false });
             const bg = new THREE.Mesh(bgGeo, bgMat);
             bg.scale.set(10, 10, 1);
-            bg.position.z = -5;
+            bg.position.z = -5; // Far back
             scene.add(bg);
 
-            loop();
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+
+            // Load a default model (Damaged Helmet)
+            new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (gltf) => {
+                model = gltf.scene;
+                model.position.set(0, 0, -2); // 2 meters in front
+                scene.add(model);
+            });
+
+            animate();
+            document.getElementById('overlay').style.display = 'none';
         }
 
-        function loop() {
-            requestAnimationFrame(loop);
+        function animate() {
+            requestAnimationFrame(animate);
 
-            // --- TRACKING STEP ---
-            const pose = alva.findCameraPose(video); // SLAM calculates 6DoF position
+            // Tracker Step
+            const pose = alva.findCameraPose(video);
             if (pose) {
                 const mat = new THREE.Matrix4().fromArray(pose);
                 
-                // Update Left Eye
+                // Update Left Eye Perspective
                 cameraL.matrixWorld.copy(mat);
                 cameraL.translateX(-IPD / 2);
                 cameraL.matrixWorldInverse.copy(cameraL.matrixWorld).invert();
 
-                // Update Right Eye
+                // Update Right Eye Perspective
                 cameraR.matrixWorld.copy(mat);
-                cameraR.translateX(IPD / 2); // Physical shift for depth
+                cameraR.translateX(IPD / 2);
                 cameraR.matrixWorldInverse.copy(cameraR.matrixWorld).invert();
             }
 
-            // --- RENDERING STEP (Stereo + Rounded Viewports) ---
-            const w = window.innerWidth, h = window.innerHeight;
-            const size = Math.min(w/2, h) * 0.9;
-            
+            // Rendering Step
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
             renderer.clear();
 
-            // Render Left Eye (Scissor to circle-ish area)
-            renderer.setViewport(w/4 - size/2, h/2 - size/2, size, size);
-            renderer.setScissor(w/4 - size/2, h/2 - size/2, size, size);
-            renderer.setScissorTest(true);
+            // Render Left Viewport
+            renderer.setViewport(0, 0, w / 2, h);
             renderer.render(scene, cameraL);
 
-            // Render Right Eye
-            renderer.setViewport(3*w/4 - size/2, h/2 - size/2, size, size);
-            renderer.setScissor(3*w/4 - size/2, h/2 - size/2, size, size);
+            // Render Right Viewport
+            renderer.setViewport(w / 2, 0, w / 2, h);
             renderer.render(scene, cameraR);
         }
 
-        document.getElementById('file').onchange = (e) => {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                new GLTFLoader().parse(ev.target.result, '', (gltf) => {
-                    if(model) scene.remove(model);
-                    model = gltf.scene;
-                    model.position.set(0, 0, -2);
-                    scene.add(model);
-                });
-            };
-            reader.readAsArrayBuffer(e.target.files[0]);
-        };
-
-        init();
+        document.getElementById('startBtn').onclick = init;
     </script>
 </body>
 </html>
