@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Mirror Stereo AR</title>
+    <title>Perfect 6DoF Mirror AR</title>
     <script type="importmap">
         {
             "imports": {
@@ -14,108 +14,84 @@
     </script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #ui { position: absolute; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #00e5ff; width: 220px; color: #00e5ff; }
-        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 10px; border-radius: 5px; cursor: pointer; text-align: center; margin-bottom: 8px; font-weight: bold; }
+        #overlay { position: absolute; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.85); padding: 20px; border-radius: 15px; border: 1px solid #00e5ff; width: 220px; color: #00e5ff; }
+        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 12px; border-radius: 8px; cursor: pointer; text-align: center; margin-bottom: 10px; font-weight: bold; }
         input[type="file"] { display: none; }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <div style="font-size: 16px; margin-bottom: 10px;">Stereo Mirror AR</div>
-        <label for="fileInput">📁 LOAD MODEL</label>
+    <div id="overlay">
+        <h2 style="margin:0 0 10px 0; font-size:18px;">6DoF Stereo Copy</h2>
+        <label for="fileInput">📁 LOAD .GLB</label>
         <input type="file" id="fileInput" accept=".glb,.gltf">
-        <button id="fullBtn">Fullscreen</button>
-        <p id="status" style="font-size: 11px; color: white;">Load a .glb to start</p>
+        <p id="status" style="font-size: 11px; color: white;">Load model, then tap "Start AR"</p>
     </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
 
-        let scene, camera, renderer, model, videoPlane;
-        const video = document.createElement('video');
+        let scene, camera, renderer, model;
 
         init();
 
         async function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / 2 / window.innerHeight, 0.01, 100);
+            camera = new THREE.PerspectiveCamera(70, (window.innerWidth / 2) / window.innerHeight, 0.01, 20);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.autoClear = false; // Required for manual split-screen
+            renderer.xr.enabled = true;
+            renderer.autoClear = false; // Essential for manual split-screen
             document.body.appendChild(renderer.domElement);
+
+            // Create Native AR Button
+            document.body.appendChild(ARButton.createButton(renderer, {
+                requiredFeatures: ['hit-test', 'local'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.getElementById('overlay') }
+            }));
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.5));
 
-            await setupCamera();
-
-            // Handle Fullscreen
-            document.getElementById('fullBtn').onclick = () => {
-                if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-                else document.exitFullscreen();
-            };
-
-            // Model Loading
+            // Load Model
             document.getElementById('fileInput').addEventListener('change', (e) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     new GLTFLoader().parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        model.position.set(0, 0, -2);
+                        model.position.set(0, 0, -1.5); // Place 1.5m in front
                         scene.add(model);
-                        document.getElementById('status').innerText = "Model Ready. Use Headset!";
+                        document.getElementById('status').innerText = "Model Anchored. Start AR.";
                     });
                 };
                 reader.readAsArrayBuffer(e.target.files[0]);
             });
 
-            // Start 6DoF via Device Orientation (Fallback for headset)
-            window.addEventListener('deviceorientation', (e) => {
-                if(model) {
-                    const r = e.beta * (Math.PI / 180);
-                    const y = e.gamma * (Math.PI / 180);
-                    camera.rotation.set(r, y, 0);
-                }
-            });
-
-            animate();
+            renderer.setAnimationLoop(render);
         }
 
-        async function setupCamera() {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-            video.srcObject = stream;
-            video.play();
-            const texture = new THREE.VideoTexture(video);
-            videoPlane = new THREE.Mesh(new THREE.PlaneGeometry(20, 12), new THREE.MeshBasicMaterial({ map: texture, depthTest: false }));
-            videoPlane.position.z = -10;
-            scene.add(videoPlane);
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
+        function render(timestamp, frame) {
+            if (!renderer.xr.isPresenting) {
+                renderer.render(scene, camera);
+                return;
+            }
 
             const width = window.innerWidth;
             const height = window.innerHeight;
 
-            // Make background follow camera for 6DoF feel
-            if (videoPlane) {
-                videoPlane.position.copy(camera.position);
-                videoPlane.quaternion.copy(camera.quaternion);
-                videoPlane.translateZ(-10);
-            }
-
             renderer.clear();
 
-            // LEFT EYE
+            // LEFT EYE VIEW
             renderer.setViewport(0, 0, width / 2, height);
             renderer.setScissor(0, 0, width / 2, height);
             renderer.setScissorTest(true);
             renderer.render(scene, camera);
 
-            // RIGHT EYE (The Copy)
+            // RIGHT EYE VIEW (The exact copy)
             renderer.setViewport(width / 2, 0, width / 2, height);
             renderer.setScissor(width / 2, 0, width / 2, height);
             renderer.setScissorTest(true);
