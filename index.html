@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>XR Pro Viewer</title>
+    <title>6DoF Stereoscopic AR</title>
     <script type="importmap">
         {
             "imports": {
@@ -13,224 +13,91 @@
         }
     </script>
     <style>
-        :root {
-            --bg-dark: #121212;
-            --accent: #00e5ff;
-            --glass: rgba(30, 30, 30, 0.85);
-        }
-
-        body { 
-            margin: 0; 
-            background-color: var(--bg-dark); 
-            color: white; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            overflow: hidden;
-        }
-
-        /* Dark Mode UI Panel */
-        #overlay {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            right: 20px;
-            z-index: 1000;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .panel {
-            background: var(--glass);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1);
-            padding: 20px;
-            border-radius: 15px;
-            pointer-events: auto;
-            max-width: 350px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }
-
-        h2 { margin: 0 0 10px 0; font-size: 18px; color: var(--accent); }
-
-        button, label {
-            background: #333;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-            display: inline-block;
-            margin-right: 5px;
-            margin-top: 5px;
-        }
-
-        button:hover { background: #444; border-color: var(--accent); }
-        .danger { background: #632a2a; }
-        .danger:hover { background: #a33535; }
-
-        /* Hidden standard file input, custom label */
-        input[type="file"] { display: none; }
-
-        /* Bottom XR Button positioning */
-        #ARButton, #VRButton {
-            border: 1px solid var(--accent) !important;
-            background: var(--glass) !important;
-            color: white !important;
-            backdrop-filter: blur(10px);
-            bottom: 40px !important;
-        }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; color: white; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 10px; }
+        button { background: #00e5ff; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        #video-canvas { display: none; }
     </style>
 </head>
 <body>
-
-    <div id="overlay">
-        <div class="panel">
-            <h2>XR Pro Viewer</h2>
-            <label for="fileInput">📁 Load .GLB Model</label>
-            <input type="file" id="fileInput" accept=".glb,.gltf">
-            
-            <div id="controls">
-                <button id="fullscreenBtn">Toggle Fullscreen</button>
-                <button class="danger" id="clearBtn">Clear Model</button>
-            </div>
-            <p id="status" style="font-size: 12px; opacity: 0.7; margin-top: 10px;">Ready.</p>
-        </div>
+    <div id="ui">
+        <h3>Stereo AR (6DoF)</h3>
+        <input type="file" id="fileInput" accept=".glb,.gltf"><br><br>
+        <button id="startBtn">Enter Stereo AR</button>
+        <p id="status" style="font-size: 11px;">1. Upload GLB -> 2. Insert phone into VR headset.</p>
     </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
 
-        let scene, camera, renderer, model, reticle;
-        let hitTestSource = null;
-        let hitTestSourceRequested = false;
+        let scene, camera, renderer, model, videoMesh;
+        const video = document.createElement('video');
 
         init();
 
-        function init() {
+        async function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // Lighting setup
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
-            directionalLight.position.set(1, 2, 1);
-            scene.add(directionalLight);
+            // 1. Setup Camera Passthrough for Stereo
+            setupCamera();
 
-            // Reticle for AR placement
-            reticle = new THREE.Mesh(
-                new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-                new THREE.MeshBasicMaterial({ color: 0x00e5ff })
-            );
-            reticle.visible = false;
-            reticle.matrixAutoUpdate = false;
-            scene.add(reticle);
+            // 2. Add Lighting
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
 
-            // XR Buttons
-            document.body.appendChild(ARButton.createButton(renderer, { 
-                requiredFeatures: ['hit-test'], 
-                optionalFeatures: ['dom-overlay'], 
-                domOverlay: { root: document.getElementById('overlay') } 
-            }));
-            
+            // 3. VR Button (Used for Stereo View)
             const vrBtn = VRButton.createButton(renderer);
-            vrBtn.addEventListener('click', () => {
-                if (screen.orientation?.lock) screen.orientation.lock('landscape').catch(()=>{});
-            });
             document.body.appendChild(vrBtn);
 
-            // UI LOGIC
-            // 1. Fullscreen Toggle
-            document.getElementById('fullscreenBtn').addEventListener('click', () => {
-                if (!document.fullscreenElement) {
-                    document.documentElement.requestFullscreen();
-                } else if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                }
-            });
-
-            // 2. Clear Model
-            document.getElementById('clearBtn').addEventListener('click', () => {
-                if (model) {
-                    scene.remove(model);
-                    model = null;
-                    document.getElementById('status').innerText = "Model cleared.";
-                }
-            });
-
-            // 3. File Loader
+            // 4. File Input
             document.getElementById('fileInput').addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                
                 const reader = new FileReader();
-                document.getElementById('status').innerText = "Loading...";
-
                 reader.onload = (event) => {
-                    const loader = new GLTFLoader();
-                    loader.parse(event.target.result, '', (gltf) => {
+                    new GLTFLoader().parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        
-                        // Scale to reasonable size
-                        const box = new THREE.Box3().setFromObject(model);
-                        const size = box.getSize(new THREE.Vector3()).length();
-                        model.scale.setScalar(0.5 / size);
-                        
-                        model.visible = false; // Stay hidden until placed in AR
+                        model.position.set(0, 0, -2); // Place 2m away
                         scene.add(model);
-                        document.getElementById('status').innerText = "Loaded. Tap floor in AR to place.";
                     });
                 };
-                reader.readAsArrayBuffer(file);
+                reader.readAsArrayBuffer(e.target.files[0]);
             });
-
-            // Controller for placement
-            const controller = renderer.xr.getController(0);
-            controller.addEventListener('select', () => {
-                if (reticle.visible && model) {
-                    model.position.setFromMatrixPosition(reticle.matrix);
-                    model.visible = true;
-                }
-            });
-            scene.add(controller);
 
             renderer.setAnimationLoop(render);
         }
 
-        function render(timestamp, frame) {
-            if (frame && renderer.xr.getSession()?.isAR) {
-                if (!hitTestSourceRequested) {
-                    renderer.xr.getSession().requestReferenceSpace('viewer').then((refSpace) => {
-                        renderer.xr.getSession().requestHitTestSource({ space: refSpace }).then((source) => {
-                            hitTestSource = source;
-                        });
-                    });
-                    hitTestSourceRequested = true;
-                }
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: 1280, height: 720 } 
+                });
+                video.srcObject = stream;
+                video.play();
 
-                if (hitTestSource) {
-                    const referenceSpace = renderer.xr.getReferenceSpace();
-                    const hitTestResults = frame.getHitTestResults(hitTestSource);
-                    if (hitTestResults.length) {
-                        const hit = hitTestResults[0];
-                        reticle.visible = true;
-                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-                    } else {
-                        reticle.visible = false;
-                    }
-                }
+                const videoTexture = new THREE.VideoTexture(video);
+                // Create a massive background sphere or plane that follows the camera
+                const geometry = new THREE.SphereGeometry(10, 32, 32);
+                const material = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.BackSide });
+                videoMesh = new THREE.Mesh(geometry, material);
+                scene.add(videoMesh);
+            } catch (err) {
+                console.error("Camera access denied: ", err);
+            }
+        }
+
+        function render() {
+            if (videoMesh && renderer.xr.isPresenting) {
+                // Ensure the background camera feed stays centered on the user's head
+                const xrCamera = renderer.xr.getCamera(camera);
+                videoMesh.position.copy(xrCamera.position);
             }
             renderer.render(scene, camera);
         }
