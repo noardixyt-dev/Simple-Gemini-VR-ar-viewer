@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ultra-Res Stereo SLAM</title>
+    <title>VIO Stereo Engine (Camera + Sensors)</title>
     <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR@master/dist/alva_ar.js"></script>
     <script type="importmap">
         {
@@ -14,126 +14,116 @@
     </script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; color: white; }
+        #video-view { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        #three-canvas { position: absolute; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
         #overlay { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .btn { background: #00e5ff; color: #000; padding: 25px 60px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 1.4rem; box-shadow: 0 0 20px #00e5ff; }
-        #debug { position: absolute; top: 10px; left: 10px; font-size: 12px; color: #00e5ff; pointer-events: none; z-index: 200; text-shadow: 1px 1px 2px black; }
+        .btn { background: #00e5ff; color: #000; padding: 25px 60px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.2rem; margin: 10px; }
     </style>
 </head>
 <body>
-    <div id="debug">System: Offline</div>
+    <video id="video-view" autoplay muted playsinline></video>
+    <canvas id="three-canvas"></canvas>
+    
     <div id="overlay">
-        <h1 style="letter-spacing: 2px;">MAX-RES AR</h1>
-        <button class="btn" id="startBtn">ENGAGE SENSORS</button>
+        <h1 id="msg">SENSORS OFFLINE</h1>
+        <button class="btn" id="startBtn">START VIO ENGINE</button>
     </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let alva, scene, renderer, video, model, videoTex, bg;
-        let cameraL, cameraR;
-        const IPD = 0.064; 
-        const status = (m) => document.getElementById('debug').innerText = `System: ${m}`;
+        let alva, scene, renderer, video, model, cameraL, cameraR;
+        let trackCanvas, trackCtx;
+        let deviceRot = new THREE.Quaternion();
+        const IPD = 0.064;
 
         async function init() {
-            status("Finding Max Res...");
-            try {
-                video = document.createElement('video');
-                video.setAttribute('autoplay', ''); video.setAttribute('muted', ''); video.setAttribute('playsinline', '');
-                
-                // ESCALATION: Request 4K resolution. 
-                // The browser will return the highest supported resolution below this.
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: 'environment', 
-                        width: { ideal: 3840 }, 
-                        height: { ideal: 2160 } 
-                    } 
-                });
-                video.srcObject = stream;
-                
-                await new Promise((resolve) => {
-                    video.onplaying = resolve;
-                    video.play();
-                });
-                
-                const res = `${video.videoWidth}x${video.videoHeight}`;
-                status(`Camera Active (${res}). Starting SLAM...`);
-            } catch (err) {
-                status("Camera Error: " + err.message);
-                return;
+            // 1. Request Motion Sensors (Crucial for VIO)
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                await DeviceOrientationEvent.requestPermission();
             }
-
-            // Init SLAM at the actual resolution found
-            alva = await AlvaAR.Initialize(video.videoWidth, video.videoHeight);
-
-            // Three.js Core
-            scene = new THREE.Scene();
-            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.autoClear = false;
-            document.body.appendChild(renderer.domElement);
-
-            // Setup Dual Cameras
-            const aspect = (window.innerWidth / 2) / window.innerHeight;
-            cameraL = new THREE.PerspectiveCamera(75, aspect, 0.1, 100);
-            cameraR = new THREE.PerspectiveCamera(75, aspect, 0.1, 100);
-
-            // Responsive Background (Preserves Aspect Ratio)
-            videoTex = new THREE.VideoTexture(video);
-            const bgGeo = new THREE.PlaneGeometry(2, 2);
-            const bgMat = new THREE.MeshBasicMaterial({ map: videoTex, depthTest: false });
-            bg = new THREE.Mesh(bgGeo, bgMat);
-            
-            // Math to make background cover the view properly
-            const videoAspect = video.videoWidth / video.videoHeight;
-            bg.scale.set(videoAspect * 5, 5, 1);
-            bg.position.z = -10;
-            scene.add(bg);
-
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 4));
-
-            // Load 3D Model
-            new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (gltf) => {
-                model = gltf.scene;
-                model.position.set(0, 0, -2);
-                scene.add(model);
-                status("LOCK ACQUIRED. SCAN FLOOR.");
+            window.addEventListener('deviceorientation', (e) => {
+                // Convert Euler angles to Quaternion for Three.js
+                const alpha = THREE.MathUtils.degToRad(e.alpha); // Z
+                const beta = THREE.MathUtils.degToRad(e.beta);   // X'
+                const gamma = THREE.MathUtils.degToRad(e.gamma); // Y''
+                const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
+                
+                // This creates a rotation based on the phone's actual tilt
+                setQuaternionFromEuler(deviceRot, beta, alpha, -gamma, orient);
             });
 
+            // 2. Start Max-Res Camera
+            video = document.getElementById('video-view');
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+            });
+            video.srcObject = stream;
+            await video.play();
+
+            // 3. Init AlvaAR for Visual Correction
+            trackCanvas = document.createElement('canvas');
+            trackCanvas.width = 1280; trackCanvas.height = 720;
+            trackCtx = trackCanvas.getContext('2d');
+            alva = await AlvaAR.Initialize(1280, 720);
+
+            setupThree();
             document.getElementById('overlay').style.display = 'none';
             animate();
         }
 
+        function setupThree() {
+            scene = new THREE.Scene();
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('three-canvas'), antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            const aspect = (window.innerWidth / 2) / window.innerHeight;
+            cameraL = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
+            cameraR = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
+
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (g) => {
+                model = g.scene;
+                model.position.set(0, 0, -2);
+                scene.add(model);
+            });
+        }
+
         function animate() {
             requestAnimationFrame(animate);
+            trackCtx.drawImage(video, 0, 0, 1280, 720);
+            const pose = alva.findCameraPose(trackCanvas);
 
-            const pose = alva.findCameraPose(video);
+            // SENSOR FUSION LOGIC:
+            // We use the Pose for POSITION and the Sensors for ROTATION
             if (pose) {
                 const mat = new THREE.Matrix4().fromArray(pose);
+                const pos = new THREE.Vector3().setFromMatrixPosition(mat);
                 
-                // Update Left
-                cameraL.matrixWorld.copy(mat);
-                cameraL.translateX(-IPD / 2);
-                cameraL.matrixWorldInverse.copy(cameraL.matrixWorld).invert();
+                // Left Eye
+                cameraL.position.copy(pos);
+                cameraL.quaternion.copy(deviceRot); // Use sensor for rotation
+                cameraL.translateX(-IPD/2);
 
-                // Update Right
-                cameraR.matrixWorld.copy(mat);
-                cameraR.translateX(IPD / 2);
-                cameraR.matrixWorldInverse.copy(cameraR.matrixWorld).invert();
+                // Right Eye
+                cameraR.position.copy(pos);
+                cameraR.quaternion.copy(deviceRot); // Use sensor for rotation
+                cameraR.translateX(IPD/2);
             }
 
             const w = window.innerWidth, h = window.innerHeight;
             renderer.clear();
+            renderer.setViewport(0, 0, w/2, h); renderer.render(scene, cameraL);
+            renderer.setViewport(w/2, 0, w/2, h); renderer.render(scene, cameraR);
+        }
 
-            // Render Left Eye
-            renderer.setViewport(0, 0, w / 2, h);
-            renderer.render(scene, cameraL);
-
-            // Render Right Eye
-            renderer.setViewport(w / 2, 0, w / 2, h);
-            renderer.render(scene, cameraR);
+        // Helper to convert phone sensors to Three.js space
+        function setQuaternionFromEuler(q, beta, alpha, gamma, orient) {
+            const zee = new THREE.Vector3(0, 0, 1);
+            const euler = new THREE.Euler(beta, alpha, gamma, 'YXZ');
+            q.setFromEuler(euler);
+            q.multiply(new THREE.Quaternion().setFromAxisAngle(zee, -orient));
         }
 
         document.getElementById('startBtn').onclick = init;
