@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Scratch-Built VIO Stereo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Scratch-Built 6DoF Stereo</title>
     <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR@master/dist/alva_ar.js"></script>
     <script type="importmap">
         {
@@ -14,18 +15,23 @@
     </script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #video-view { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-        #three-canvas { position: absolute; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
-        #ui { position: absolute; inset: 0; z-index: 100; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; }
-        .btn { background: #00e5ff; color: #000; padding: 25px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.2rem; }
+        #video-view { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; pointer-events: none; }
+        #three-canvas { position: absolute; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        #ui { position: absolute; inset: 0; z-index: 100; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #00e5ff; }
+        .btn { background: #00e5ff; color: #000; padding: 25px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.2rem; box-shadow: 0 0 20px #00e5ff; }
+        #status { position: absolute; top: 20px; width: 100%; text-align: center; color: #00e5ff; z-index: 200; font-weight: bold; text-shadow: 2px 2px black; }
     </style>
 </head>
 <body>
     <video id="video-view" autoplay muted playsinline></video>
     <canvas id="three-canvas"></canvas>
+    
+    <div id="status">SENSOR STANDBY</div>
+    
     <div id="ui">
-        <h1>STEREO VIO ENGINE</h1>
-        <button class="btn" id="startBtn">BOOT SYSTEM</button>
+        <h1>6DoF STEREO ENGINE</h1>
+        <p>Align phone in headset & press start</p>
+        <button class="btn" id="startBtn">ENGAGE VIO</button>
     </div>
 
     <script type="module">
@@ -34,47 +40,66 @@
 
         let alva, scene, renderer, video, cameraL, cameraR;
         let trackCanvas, trackCtx;
-        const IPD = 0.064; // Average human eye distance
+        let deviceRot = new THREE.Quaternion();
+        const IPD = 0.064; 
 
-        async function init() {
-            // 1. Request Sensors (The "Inertial" part of VIO)
+        async function boot() {
+            // 1. Request Motion Sensors (Rotation)
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 await DeviceOrientationEvent.requestPermission();
             }
+            window.addEventListener('deviceorientation', handleRotation);
 
-            // 2. Request Camera (The "Visual" part of VIO)
+            // 2. Request Highest Camera Feed
             video = document.getElementById('video-view');
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
-            });
-            video.srcObject = stream;
-            await video.play();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } } 
+                });
+                video.srcObject = stream;
+                await video.play();
+                
+                // 3. Setup Tracking (720p for the math engine)
+                trackCanvas = document.createElement('canvas');
+                trackCanvas.width = 1280; trackCanvas.height = 720;
+                trackCtx = trackCanvas.getContext('2d', { alpha: false });
 
-            // 3. Setup Tracking Buffer (720p for high-precision math)
-            trackCanvas = document.createElement('canvas');
-            trackCanvas.width = 1280; trackCanvas.height = 720;
-            trackCtx = trackCanvas.getContext('2d');
-
-            // 4. Initialize Tracking AI
-            alva = await AlvaAR.Initialize(1280, 720);
-            
-            setup3D();
-            document.getElementById('ui').style.display = 'none';
-            animate();
+                alva = await AlvaAR.Initialize(1280, 720);
+                
+                init3D();
+                document.getElementById('ui').style.display = 'none';
+                document.getElementById('status').innerText = "CALIBRATING: Pan phone slowly...";
+                animate();
+            } catch (e) {
+                alert("Camera Access Required: " + e.message);
+            }
         }
 
-        function setup3D() {
+        function handleRotation(e) {
+            const alpha = THREE.MathUtils.degToRad(e.alpha);
+            const beta = THREE.MathUtils.degToRad(e.beta);
+            const gamma = THREE.MathUtils.degToRad(e.gamma);
+            const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
+
+            const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+            deviceRot.setFromEuler(euler);
+            const align = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient);
+            deviceRot.multiply(align);
+        }
+
+        function init3D() {
             const canvas = document.getElementById('three-canvas');
             scene = new THREE.Scene();
             renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.autoClear = false;
 
-            // Calculate FOV based on phone screen ratio
             const aspect = (window.innerWidth / 2) / window.innerHeight;
             cameraL = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
             cameraR = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 4));
             
             new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (gltf) => {
                 const model = gltf.scene;
@@ -86,25 +111,26 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // Analyze Video Frame for Movement
+            // Feed the math engine
             trackCtx.drawImage(video, 0, 0, 1280, 720);
             const pose = alva.findCameraPose(trackCanvas);
 
             if (pose) {
+                document.getElementById('status').innerText = "TRACKING LOCKED";
                 const mat = new THREE.Matrix4().fromArray(pose);
+                const position = new THREE.Vector3().setFromMatrixPosition(mat);
                 
-                // Set Left Eye
-                cameraL.matrixWorld.copy(mat);
+                // LEFT EYE: Fusion of Pose Position + Sensor Rotation
+                cameraL.position.copy(position);
+                cameraL.quaternion.copy(deviceRot);
                 cameraL.translateX(-IPD / 2);
-                cameraL.matrixWorldInverse.copy(cameraL.matrixWorld).invert();
 
-                // Set Right Eye
-                cameraR.matrixWorld.copy(mat);
+                // RIGHT EYE: Fusion of Pose Position + Sensor Rotation
+                cameraR.position.copy(position);
+                cameraR.quaternion.copy(deviceRot);
                 cameraR.translateX(IPD / 2);
-                cameraR.matrixWorldInverse.copy(cameraR.matrixWorld).invert();
             }
 
-            // Double Rendering (Stereo Viewport Split)
             const w = window.innerWidth, h = window.innerHeight;
             renderer.clear();
             
@@ -115,7 +141,7 @@
             renderer.render(scene, cameraR);
         }
 
-        document.getElementById('startBtn').onclick = init;
+        document.getElementById('startBtn').onclick = boot;
     </script>
 </body>
 </html>
