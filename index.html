@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebXR Model Viewer</title>
+    <title>Advanced WebXR AR/VR Viewer</title>
     <script type="importmap">
         {
             "imports": {
@@ -14,14 +13,17 @@
         }
     </script>
     <style>
-        body { margin: 0; font-family: sans-serif; overflow: hidden; }
-        #ui { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(255,255,255,0.8); padding: 15px; border-radius: 8px; }
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: sans-serif; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.7); color: white; padding: 15px; border-radius: 10px; }
+        input { margin-top: 10px; color: white; }
+        /* Style for the XR Buttons provided by Three.js */
+        #ARButton, #VRButton { bottom: 30px !important; border-radius: 8px !important; }
     </style>
 </head>
 <body>
     <div id="ui">
+        <strong>Model Loader</strong><br>
         <input type="file" id="fileInput" accept=".glb,.gltf">
-        <p>1. Upload GLB<br>2. Click AR or VR button below</p>
     </div>
 
     <script type="module">
@@ -36,7 +38,7 @@
 
         function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
@@ -44,23 +46,39 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // Lighting
+            // Light setup for AR (needs to be bright)
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
 
-            // Add Buttons
-            document.body.appendChild(ARButton.createButton(renderer));
-            document.body.appendChild(VRButton.createButton(renderer));
+            // 1. AR Button (Supports Portrait & Landscape)
+            document.body.appendChild(ARButton.createButton(renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            }));
 
-            // File Loading Logic
-            document.getElementById('fileInput').addEventListener('change', function(e) {
+            // 2. VR Button (Handles Stereoscopic Landscape)
+            const vrBtn = VRButton.createButton(renderer);
+            vrBtn.addEventListener('click', () => {
+                // Force landscape for VR if supported
+                if (screen.orientation && screen.orientation.lock) {
+                    screen.orientation.lock('landscape').catch(e => console.log("Orientation lock not supported"));
+                }
+            });
+            document.body.appendChild(vrBtn);
+
+            // Loader
+            document.getElementById('fileInput').addEventListener('change', (e) => {
                 const reader = new FileReader();
-                reader.onload = function(event) {
+                reader.onload = (event) => {
                     const loader = new GLTFLoader();
                     loader.parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        model.position.z = -2; // Place in front of camera
+                        model.position.set(0, 0, -1); // 1 meter in front
                         scene.add(model);
                     });
                 };
@@ -70,7 +88,8 @@
             renderer.setAnimationLoop(render);
         }
 
-        function render() {
+        function render(timestamp, frame) {
+            // If in AR, the camera background is automatically the device camera feed
             renderer.render(scene, camera);
         }
 
