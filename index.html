@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>6DoF Stereoscopic AR</title>
+    <title>6DoF Stereo AR</title>
     <script type="importmap">
         {
             "imports": {
@@ -13,18 +13,22 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; color: white; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 10px; }
-        button { background: #00e5ff; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        #video-canvas { display: none; }
+        body { margin: 0; background: #000; color: #eee; font-family: sans-serif; overflow: hidden; }
+        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; background: rgba(20,20,20,0.9); padding: 20px; border-radius: 12px; border: 1px solid #444; width: 280px; }
+        h2 { font-size: 16px; margin: 0 0 10px; color: #00e5ff; }
+        button, label { display: block; width: 100%; background: #333; color: white; border: 1px solid #555; padding: 10px; border-radius: 6px; cursor: pointer; text-align: center; margin-bottom: 10px; }
+        button:hover { background: #444; border-color: #00e5ff; }
+        input[type="file"] { display: none; }
+        #status { font-size: 12px; opacity: 0.7; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h3>Stereo AR (6DoF)</h3>
-        <input type="file" id="fileInput" accept=".glb,.gltf"><br><br>
-        <button id="startBtn">Enter Stereo AR</button>
-        <p id="status" style="font-size: 11px;">1. Upload GLB -> 2. Insert phone into VR headset.</p>
+        <h2>Stereoscopic 6DoF AR</h2>
+        <label for="fileInput">📂 Load .GLB Model</label>
+        <input type="file" id="fileInput" accept=".glb,.gltf">
+        <button id="clearBtn">Clear Scene</button>
+        <div id="status">Upload a model, then enter VR.</div>
     </div>
 
     <script type="module">
@@ -39,7 +43,7 @@
 
         async function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
@@ -47,55 +51,66 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // 1. Setup Camera Passthrough for Stereo
-            setupCamera();
-
-            // 2. Add Lighting
+            // Lighting for the model
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            const sun = new THREE.DirectionalLight(0xffffff, 2);
+            sun.position.set(5, 10, 7.5);
+            scene.add(sun);
 
-            // 3. VR Button (Used for Stereo View)
-            const vrBtn = VRButton.createButton(renderer);
-            document.body.appendChild(vrBtn);
+            // 1. Setup Video Passthrough
+            await setupCamera();
 
-            // 4. File Input
+            // 2. Add VR Button (This provides the stereoscopic split-screen)
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            // 3. Model Loading Logic
             document.getElementById('fileInput').addEventListener('change', (e) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     new GLTFLoader().parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        model.position.set(0, 0, -2); // Place 2m away
+                        
+                        // Normalize size
+                        const box = new THREE.Box3().setFromObject(model);
+                        const size = box.getSize(new THREE.Vector3()).length();
+                        model.scale.setScalar(1.0 / size); 
+                        
+                        model.position.set(0, 0, -3); // 3 meters ahead
                         scene.add(model);
+                        document.getElementById('status').innerText = "Model loaded. Go to VR mode!";
                     });
                 };
                 reader.readAsArrayBuffer(e.target.files[0]);
             });
+
+            document.getElementById('clearBtn').onclick = () => { if(model) scene.remove(model); };
 
             renderer.setAnimationLoop(render);
         }
 
         async function setupCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: 1280, height: 720 } 
-                });
+                const constraints = { video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
+                video.setAttribute('playsinline', '');
                 video.play();
 
                 const videoTexture = new THREE.VideoTexture(video);
-                // Create a massive background sphere or plane that follows the camera
-                const geometry = new THREE.SphereGeometry(10, 32, 32);
+                // Creating a giant cylinder/sphere for the camera background
+                const geometry = new THREE.SphereGeometry(100, 32, 32);
                 const material = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.BackSide });
                 videoMesh = new THREE.Mesh(geometry, material);
                 scene.add(videoMesh);
             } catch (err) {
-                console.error("Camera access denied: ", err);
+                document.getElementById('status').innerText = "Camera error: " + err.message;
             }
         }
 
         function render() {
             if (videoMesh && renderer.xr.isPresenting) {
-                // Ensure the background camera feed stays centered on the user's head
+                // Keep the camera feed background locked to the user's head position
                 const xrCamera = renderer.xr.getCamera(camera);
                 videoMesh.position.copy(xrCamera.position);
             }
