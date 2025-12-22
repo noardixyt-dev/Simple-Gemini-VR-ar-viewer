@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Fixed Alva 6DoF Stereo</title>
-    <script src="https://cdn.jsdelivr.net/gh/alvacoda/alvacoda_ar@1.0.0/dist/alva_ar.js"></script>
+    <title>Ultra-Res Stereo SLAM</title>
+    <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR@master/dist/alva_ar.js"></script>
     <script type="importmap">
         {
             "imports": {
@@ -13,106 +13,125 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; z-index: 100; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: flex; align-items: center; justify-content: center; }
-        .btn { background: #00e5ff; color: #000; padding: 20px; border-radius: 10px; font-weight: bold; cursor: pointer; border: none; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; color: white; }
+        #overlay { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .btn { background: #00e5ff; color: #000; padding: 25px 60px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 1.4rem; box-shadow: 0 0 20px #00e5ff; }
+        #debug { position: absolute; top: 10px; left: 10px; font-size: 12px; color: #00e5ff; pointer-events: none; z-index: 200; text-shadow: 1px 1px 2px black; }
     </style>
 </head>
 <body>
-    <div id="overlay"><button class="btn" id="startBtn">START AR ENGINE</button></div>
+    <div id="debug">System: Offline</div>
+    <div id="overlay">
+        <h1 style="letter-spacing: 2px;">MAX-RES AR</h1>
+        <button class="btn" id="startBtn">ENGAGE SENSORS</button>
+    </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let alva, scene, renderer, video, model, videoTex;
+        let alva, scene, renderer, video, model, videoTex, bg;
         let cameraL, cameraR;
-        const IPD = 0.064; // Distance between eyes
+        const IPD = 0.064; 
+        const status = (m) => document.getElementById('debug').innerText = `System: ${m}`;
 
         async function init() {
-            // 1. Camera setup with explicit wait
-            video = document.createElement('video');
-            video.setAttribute('autoplay', '');
-            video.setAttribute('muted', '');
-            video.setAttribute('playsinline', '');
-            
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
-            });
-            video.srcObject = stream;
-            
-            // Wait for video to actually start playing
-            await new Promise((resolve) => video.onloadedmetadata = resolve);
-            video.play();
+            status("Finding Max Res...");
+            try {
+                video = document.createElement('video');
+                video.setAttribute('autoplay', ''); video.setAttribute('muted', ''); video.setAttribute('playsinline', '');
+                
+                // ESCALATION: Request 4K resolution. 
+                // The browser will return the highest supported resolution below this.
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment', 
+                        width: { ideal: 3840 }, 
+                        height: { ideal: 2160 } 
+                    } 
+                });
+                video.srcObject = stream;
+                
+                await new Promise((resolve) => {
+                    video.onplaying = resolve;
+                    video.play();
+                });
+                
+                const res = `${video.videoWidth}x${video.videoHeight}`;
+                status(`Camera Active (${res}). Starting SLAM...`);
+            } catch (err) {
+                status("Camera Error: " + err.message);
+                return;
+            }
 
-            // 2. Initialize AlvaAR SLAM
-            // We use the video dimensions for the tracker
+            // Init SLAM at the actual resolution found
             alva = await AlvaAR.Initialize(video.videoWidth, video.videoHeight);
 
-            // 3. Three.js Setup
+            // Three.js Core
             scene = new THREE.Scene();
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.autoClear = false;
             document.body.appendChild(renderer.domElement);
 
-            // Stereoscopic Cameras
+            // Setup Dual Cameras
             const aspect = (window.innerWidth / 2) / window.innerHeight;
-            cameraL = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
-            cameraR = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            cameraL = new THREE.PerspectiveCamera(75, aspect, 0.1, 100);
+            cameraR = new THREE.PerspectiveCamera(75, aspect, 0.1, 100);
 
-            // Background Video Feed (Must be visible in both eyes)
+            // Responsive Background (Preserves Aspect Ratio)
             videoTex = new THREE.VideoTexture(video);
             const bgGeo = new THREE.PlaneGeometry(2, 2);
             const bgMat = new THREE.MeshBasicMaterial({ map: videoTex, depthTest: false });
-            const bg = new THREE.Mesh(bgGeo, bgMat);
-            bg.scale.set(10, 10, 1);
-            bg.position.z = -5; // Far back
+            bg = new THREE.Mesh(bgGeo, bgMat);
+            
+            // Math to make background cover the view properly
+            const videoAspect = video.videoWidth / video.videoHeight;
+            bg.scale.set(videoAspect * 5, 5, 1);
+            bg.position.z = -10;
             scene.add(bg);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 4));
 
-            // Load a default model (Damaged Helmet)
+            // Load 3D Model
             new GLTFLoader().load('https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf', (gltf) => {
                 model = gltf.scene;
-                model.position.set(0, 0, -2); // 2 meters in front
+                model.position.set(0, 0, -2);
                 scene.add(model);
+                status("LOCK ACQUIRED. SCAN FLOOR.");
             });
 
-            animate();
             document.getElementById('overlay').style.display = 'none';
+            animate();
         }
 
         function animate() {
             requestAnimationFrame(animate);
 
-            // Tracker Step
             const pose = alva.findCameraPose(video);
             if (pose) {
                 const mat = new THREE.Matrix4().fromArray(pose);
                 
-                // Update Left Eye Perspective
+                // Update Left
                 cameraL.matrixWorld.copy(mat);
                 cameraL.translateX(-IPD / 2);
                 cameraL.matrixWorldInverse.copy(cameraL.matrixWorld).invert();
 
-                // Update Right Eye Perspective
+                // Update Right
                 cameraR.matrixWorld.copy(mat);
                 cameraR.translateX(IPD / 2);
                 cameraR.matrixWorldInverse.copy(cameraR.matrixWorld).invert();
             }
 
-            // Rendering Step
-            const w = window.innerWidth;
-            const h = window.innerHeight;
-
+            const w = window.innerWidth, h = window.innerHeight;
             renderer.clear();
 
-            // Render Left Viewport
+            // Render Left Eye
             renderer.setViewport(0, 0, w / 2, h);
             renderer.render(scene, cameraL);
 
-            // Render Right Viewport
+            // Render Right Eye
             renderer.setViewport(w / 2, 0, w / 2, h);
             renderer.render(scene, cameraR);
         }
