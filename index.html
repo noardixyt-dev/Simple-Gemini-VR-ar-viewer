@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Quest-Style Mobile AR</title>
+    <title>Mirror Stereo AR</title>
     <script type="importmap">
         {
             "imports": {
@@ -13,24 +13,24 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; color: #00e5ff; font-family: sans-serif; overflow: hidden; }
-        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 12px; border: 1px solid #00e5ff; width: 260px; }
-        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 12px; border-radius: 6px; cursor: pointer; text-align: center; margin-bottom: 10px; font-weight: bold; }
-        #status { font-size: 11px; color: #fff; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #ui { position: absolute; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #00e5ff; width: 220px; color: #00e5ff; }
+        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 10px; border-radius: 5px; cursor: pointer; text-align: center; margin-bottom: 8px; font-weight: bold; }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <div style="font-size: 18px; margin-bottom: 10px;">Quest-Style AR</div>
-        <label for="fileInput">📁 UPLOAD MODEL</label>
-        <input type="file" id="fileInput" style="display:none" accept=".glb,.gltf">
-        <p id="status">Upload a .glb to begin</p>
+        <div style="font-size: 16px; margin-bottom: 10px;">Stereo Mirror AR</div>
+        <label for="fileInput">📁 LOAD MODEL</label>
+        <input type="file" id="fileInput" accept=".glb,.gltf">
+        <button id="fullBtn">Fullscreen</button>
+        <p id="status" style="font-size: 11px; color: white;">Load a .glb to start</p>
     </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { VRButton } from 'three/addons/webxr/VRButton.js';
 
         let scene, camera, renderer, model, videoPlane;
         const video = document.createElement('video');
@@ -39,70 +39,86 @@
 
         async function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / 2 / window.innerHeight, 0.01, 100);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
+            renderer.autoClear = false; // Required for manual split-screen
             document.body.appendChild(renderer.domElement);
-
-            // Add VR Button (Stereoscopic)
-            document.body.appendChild(VRButton.createButton(renderer));
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.5));
 
-            await setupPassthrough();
+            await setupCamera();
 
+            // Handle Fullscreen
+            document.getElementById('fullBtn').onclick = () => {
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+                else document.exitFullscreen();
+            };
+
+            // Model Loading
             document.getElementById('fileInput').addEventListener('change', (e) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     new GLTFLoader().parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        const box = new THREE.Box3().setFromObject(model);
-                        const size = box.getSize(new THREE.Vector3()).length();
-                        model.scale.setScalar(1.0 / size); // 1 meter size
-                        model.position.set(0, 0, -2); // 2 meters away
+                        model.position.set(0, 0, -2);
                         scene.add(model);
-                        document.getElementById('status').innerText = "Model Ready. Enter VR.";
+                        document.getElementById('status').innerText = "Model Ready. Use Headset!";
                     });
                 };
                 reader.readAsArrayBuffer(e.target.files[0]);
             });
 
-            renderer.setAnimationLoop(render);
+            // Start 6DoF via Device Orientation (Fallback for headset)
+            window.addEventListener('deviceorientation', (e) => {
+                if(model) {
+                    const r = e.beta * (Math.PI / 180);
+                    const y = e.gamma * (Math.PI / 180);
+                    camera.rotation.set(r, y, 0);
+                }
+            });
+
+            animate();
         }
 
-        async function setupPassthrough() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
-                });
-                video.srcObject = stream;
-                video.setAttribute('playsinline', '');
-                video.play();
-
-                const texture = new THREE.VideoTexture(video);
-                // Create a plane that covers the background
-                const geometry = new THREE.PlaneGeometry(20, 12); 
-                const material = new THREE.MeshBasicMaterial({ map: texture, depthTest: false, depthWrite: false });
-                videoPlane = new THREE.Mesh(geometry, material);
-                videoPlane.renderOrder = -1; // Ensure it renders behind everything
-                scene.add(videoPlane);
-            } catch (e) {
-                document.getElementById('status').innerText = "Camera Error: " + e.message;
-            }
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = stream;
+            video.play();
+            const texture = new THREE.VideoTexture(video);
+            videoPlane = new THREE.Mesh(new THREE.PlaneGeometry(20, 12), new THREE.MeshBasicMaterial({ map: texture, depthTest: false }));
+            videoPlane.position.z = -10;
+            scene.add(videoPlane);
         }
 
-        function render() {
-            if (videoPlane && renderer.xr.isPresenting) {
-                const xrCamera = renderer.xr.getCamera(camera);
-                // LOCK the camera plane to the headset's eyes
-                videoPlane.position.copy(xrCamera.position);
-                videoPlane.quaternion.copy(xrCamera.quaternion);
-                videoPlane.translateZ(-15); // Push back so models can be in front
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            // Make background follow camera for 6DoF feel
+            if (videoPlane) {
+                videoPlane.position.copy(camera.position);
+                videoPlane.quaternion.copy(camera.quaternion);
+                videoPlane.translateZ(-10);
             }
+
+            renderer.clear();
+
+            // LEFT EYE
+            renderer.setViewport(0, 0, width / 2, height);
+            renderer.setScissor(0, 0, width / 2, height);
+            renderer.setScissorTest(true);
+            renderer.render(scene, camera);
+
+            // RIGHT EYE (The Copy)
+            renderer.setViewport(width / 2, 0, width / 2, height);
+            renderer.setScissor(width / 2, 0, width / 2, height);
+            renderer.setScissorTest(true);
             renderer.render(scene, camera);
         }
     </script>
