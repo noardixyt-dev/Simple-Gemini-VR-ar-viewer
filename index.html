@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>6DoF Stereo AR</title>
+    <title>Quest-Style Mobile AR</title>
     <script type="importmap">
         {
             "imports": {
@@ -13,22 +13,18 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; color: #eee; font-family: sans-serif; overflow: hidden; }
-        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; background: rgba(20,20,20,0.9); padding: 20px; border-radius: 12px; border: 1px solid #444; width: 280px; }
-        h2 { font-size: 16px; margin: 0 0 10px; color: #00e5ff; }
-        button, label { display: block; width: 100%; background: #333; color: white; border: 1px solid #555; padding: 10px; border-radius: 6px; cursor: pointer; text-align: center; margin-bottom: 10px; }
-        button:hover { background: #444; border-color: #00e5ff; }
-        input[type="file"] { display: none; }
-        #status { font-size: 12px; opacity: 0.7; }
+        body { margin: 0; background: #000; color: #00e5ff; font-family: sans-serif; overflow: hidden; }
+        #ui { position: absolute; top: 20px; left: 20px; z-index: 100; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 12px; border: 1px solid #00e5ff; width: 260px; }
+        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 12px; border-radius: 6px; cursor: pointer; text-align: center; margin-bottom: 10px; font-weight: bold; }
+        #status { font-size: 11px; color: #fff; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h2>Stereoscopic 6DoF AR</h2>
-        <label for="fileInput">📂 Load .GLB Model</label>
-        <input type="file" id="fileInput" accept=".glb,.gltf">
-        <button id="clearBtn">Clear Scene</button>
-        <div id="status">Upload a model, then enter VR.</div>
+        <div style="font-size: 18px; margin-bottom: 10px;">Quest-Style AR</div>
+        <label for="fileInput">📁 UPLOAD MODEL</label>
+        <input type="file" id="fileInput" style="display:none" accept=".glb,.gltf">
+        <p id="status">Upload a .glb to begin</p>
     </div>
 
     <script type="module">
@@ -36,14 +32,14 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
 
-        let scene, camera, renderer, model, videoMesh;
+        let scene, camera, renderer, model, videoPlane;
         const video = document.createElement('video');
 
         init();
 
         async function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
@@ -51,77 +47,64 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // Lighting for the model
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
-            const sun = new THREE.DirectionalLight(0xffffff, 2);
-            sun.position.set(5, 10, 7.5);
-            scene.add(sun);
-
-            // 1. Setup Video Passthrough
-            await setupCamera();
-
-            // 2. Add VR Button (This provides the stereoscopic split-screen)
+            // Add VR Button (Stereoscopic)
             document.body.appendChild(VRButton.createButton(renderer));
 
-            // 3. Model Loading Logic
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.5));
+
+            await setupPassthrough();
+
             document.getElementById('fileInput').addEventListener('change', (e) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     new GLTFLoader().parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        
-                        // Normalize size
                         const box = new THREE.Box3().setFromObject(model);
                         const size = box.getSize(new THREE.Vector3()).length();
-                        model.scale.setScalar(1.0 / size); 
-                        
-                        model.position.set(0, 0, -3); // 3 meters ahead
+                        model.scale.setScalar(1.0 / size); // 1 meter size
+                        model.position.set(0, 0, -2); // 2 meters away
                         scene.add(model);
-                        document.getElementById('status').innerText = "Model loaded. Go to VR mode!";
+                        document.getElementById('status').innerText = "Model Ready. Enter VR.";
                     });
                 };
                 reader.readAsArrayBuffer(e.target.files[0]);
             });
 
-            document.getElementById('clearBtn').onclick = () => { if(model) scene.remove(model); };
-
             renderer.setAnimationLoop(render);
         }
 
-        async function setupCamera() {
+        async function setupPassthrough() {
             try {
-                const constraints = { video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } };
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
+                });
                 video.srcObject = stream;
                 video.setAttribute('playsinline', '');
                 video.play();
 
-                const videoTexture = new THREE.VideoTexture(video);
-                // Creating a giant cylinder/sphere for the camera background
-                const geometry = new THREE.SphereGeometry(100, 32, 32);
-                const material = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.BackSide });
-                videoMesh = new THREE.Mesh(geometry, material);
-                scene.add(videoMesh);
-            } catch (err) {
-                document.getElementById('status').innerText = "Camera error: " + err.message;
+                const texture = new THREE.VideoTexture(video);
+                // Create a plane that covers the background
+                const geometry = new THREE.PlaneGeometry(20, 12); 
+                const material = new THREE.MeshBasicMaterial({ map: texture, depthTest: false, depthWrite: false });
+                videoPlane = new THREE.Mesh(geometry, material);
+                videoPlane.renderOrder = -1; // Ensure it renders behind everything
+                scene.add(videoPlane);
+            } catch (e) {
+                document.getElementById('status').innerText = "Camera Error: " + e.message;
             }
         }
 
         function render() {
-            if (videoMesh && renderer.xr.isPresenting) {
-                // Keep the camera feed background locked to the user's head position
+            if (videoPlane && renderer.xr.isPresenting) {
                 const xrCamera = renderer.xr.getCamera(camera);
-                videoMesh.position.copy(xrCamera.position);
+                // LOCK the camera plane to the headset's eyes
+                videoPlane.position.copy(xrCamera.position);
+                videoPlane.quaternion.copy(xrCamera.quaternion);
+                videoPlane.translateZ(-15); // Push back so models can be in front
             }
             renderer.render(scene, camera);
         }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
