@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Perfect 6DoF Mirror AR</title>
+    <title>Perfect Mirror 6DoF</title>
     <script type="importmap">
         {
             "imports": {
@@ -13,18 +13,17 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #overlay { position: absolute; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.85); padding: 20px; border-radius: 15px; border: 1px solid #00e5ff; width: 220px; color: #00e5ff; }
-        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 12px; border-radius: 8px; cursor: pointer; text-align: center; margin-bottom: 10px; font-weight: bold; }
-        input[type="file"] { display: none; }
+        body { margin: 0; background: #000; overflow: hidden; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.8); color: #00e5ff; padding: 15px; border-radius: 10px; border: 1px solid #00e5ff; }
+        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 10px; margin-top: 5px; border-radius: 5px; cursor: pointer; text-align: center; }
+        input { display: none; }
     </style>
 </head>
 <body>
-    <div id="overlay">
-        <h2 style="margin:0 0 10px 0; font-size:18px;">6DoF Stereo Copy</h2>
-        <label for="fileInput">📁 LOAD .GLB</label>
-        <input type="file" id="fileInput" accept=".glb,.gltf">
-        <p id="status" style="font-size: 11px; color: white;">Load model, then tap "Start AR"</p>
+    <div id="ui">
+        <label for="file">📁 UPLOAD GLB</label>
+        <input type="file" id="file" accept=".glb,.gltf">
+        <div id="status" style="font-size: 11px; margin-top: 5px;">Upload model to start</div>
     </div>
 
     <script type="module">
@@ -36,34 +35,35 @@
 
         init();
 
-        async function init() {
+        function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, (window.innerWidth / 2) / window.innerHeight, 0.01, 20);
+            // Standard handheld aspect ratio
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-            renderer.autoClear = false; // Essential for manual split-screen
+            // This stops the browser from clearing the "first eye" before drawing the "second eye"
+            renderer.autoClear = false; 
             document.body.appendChild(renderer.domElement);
 
-            // Create Native AR Button
-            document.body.appendChild(ARButton.createButton(renderer, {
-                requiredFeatures: ['hit-test', 'local'],
+            const arBtn = ARButton.createButton(renderer, {
+                requiredFeatures: ['local-floor'],
                 optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.getElementById('overlay') }
-            }));
+                domOverlay: { root: document.getElementById('ui') }
+            });
+            document.body.appendChild(arBtn);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.5));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
 
-            // Load Model
-            document.getElementById('fileInput').addEventListener('change', (e) => {
+            document.getElementById('file').addEventListener('change', (e) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     new GLTFLoader().parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        model.position.set(0, 0, -1.5); // Place 1.5m in front
+                        model.position.set(0, 0, -1); 
                         scene.add(model);
                         document.getElementById('status').innerText = "Model Anchored. Start AR.";
                     });
@@ -75,27 +75,30 @@
         }
 
         function render(timestamp, frame) {
-            if (!renderer.xr.isPresenting) {
-                renderer.render(scene, camera);
-                return;
-            }
-
             const width = window.innerWidth;
             const height = window.innerHeight;
 
-            renderer.clear();
+            if (renderer.xr.isPresenting) {
+                // 1. Clear the screen once per frame
+                renderer.clear();
 
-            // LEFT EYE VIEW
-            renderer.setViewport(0, 0, width / 2, height);
-            renderer.setScissor(0, 0, width / 2, height);
-            renderer.setScissorTest(true);
-            renderer.render(scene, camera);
+                // 2. Render Left Eye (Handheld view on left side)
+                renderer.setViewport(0, 0, width / 2, height);
+                renderer.setScissor(0, 0, width / 2, height);
+                renderer.setScissorTest(true);
+                renderer.render(scene, camera);
 
-            // RIGHT EYE VIEW (The exact copy)
-            renderer.setViewport(width / 2, 0, width / 2, height);
-            renderer.setScissor(width / 2, 0, width / 2, height);
-            renderer.setScissorTest(true);
-            renderer.render(scene, camera);
+                // 3. Render Right Eye (The mirror copy)
+                renderer.setViewport(width / 2, 0, width / 2, height);
+                renderer.setScissor(width / 2, 0, width / 2, height);
+                renderer.setScissorTest(true);
+                renderer.render(scene, camera);
+            } else {
+                // Standard single view when not in AR
+                renderer.setViewport(0, 0, width, height);
+                renderer.setScissorTest(false);
+                renderer.render(scene, camera);
+            }
         }
     </script>
 </body>
