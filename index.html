@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Perfect Mirror 6DoF</title>
+    <title>Native 6DoF AR</title>
     <script type="importmap">
         {
             "imports": {
@@ -13,17 +13,27 @@
         }
     </script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.8); color: #00e5ff; padding: 15px; border-radius: 10px; border: 1px solid #00e5ff; }
-        button, label { display: block; width: 100%; background: #111; color: #00e5ff; border: 1px solid #00e5ff; padding: 10px; margin-top: 5px; border-radius: 5px; cursor: pointer; text-align: center; }
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
+        #ui { 
+            position: absolute; top: 20px; left: 20px; z-index: 100; 
+            background: rgba(0,0,0,0.85); color: #00e5ff; padding: 20px; 
+            border-radius: 15px; border: 1px solid #00e5ff; width: 250px;
+        }
+        button, label { 
+            display: block; width: 100%; background: #111; color: #00e5ff; 
+            border: 1px solid #00e5ff; padding: 12px; margin-top: 10px; 
+            border-radius: 8px; cursor: pointer; text-align: center; font-weight: bold;
+        }
         input { display: none; }
+        #status { font-size: 12px; margin-top: 10px; color: white; opacity: 0.8; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <label for="file">📁 UPLOAD GLB</label>
+        <div style="font-size: 18px; font-weight: bold;">AR Pro Tracker</div>
+        <label for="file">📂 LOAD .GLB MODEL</label>
         <input type="file" id="file" accept=".glb,.gltf">
-        <div id="status" style="font-size: 11px; margin-top: 5px;">Upload model to start</div>
+        <div id="status">1. Upload a model<br>2. Press "Start AR"</div>
     </div>
 
     <script type="module">
@@ -37,69 +47,65 @@
 
         function init() {
             scene = new THREE.Scene();
-            // Standard handheld aspect ratio
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-            // This stops the browser from clearing the "first eye" before drawing the "second eye"
-            renderer.autoClear = false; 
             document.body.appendChild(renderer.domElement);
 
+            // Create the official AR button with DOM overlay
             const arBtn = ARButton.createButton(renderer, {
-                requiredFeatures: ['local-floor'],
+                requiredFeatures: ['hit-test', 'local-floor'],
                 optionalFeatures: ['dom-overlay'],
                 domOverlay: { root: document.getElementById('ui') }
             });
             document.body.appendChild(arBtn);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
+            // Bright lighting for the model
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            const sun = new THREE.DirectionalLight(0xffffff, 2);
+            sun.position.set(1, 1, 1);
+            scene.add(sun);
 
+            // File Loading Logic
             document.getElementById('file').addEventListener('change', (e) => {
+                const file = e.target.files[0];
                 const reader = new FileReader();
+                document.getElementById('status').innerText = "Loading model...";
+
                 reader.onload = (event) => {
-                    new GLTFLoader().parse(event.target.result, '', (gltf) => {
+                    const loader = new GLTFLoader();
+                    loader.parse(event.target.result, '', (gltf) => {
                         if (model) scene.remove(model);
                         model = gltf.scene;
-                        model.position.set(0, 0, -1); 
+                        
+                        // Scale to a visible size (approx 0.5m)
+                        const box = new THREE.Box3().setFromObject(model);
+                        const size = box.getSize(new THREE.Vector3()).length();
+                        model.scale.setScalar(0.5 / size);
+                        
+                        // Place 1 meter in front of the camera initially
+                        model.position.set(0, 0, -1);
                         scene.add(model);
-                        document.getElementById('status').innerText = "Model Anchored. Start AR.";
+                        
+                        document.getElementById('status').innerText = "Model Loaded. Tap 'START AR'.";
                     });
                 };
-                reader.readAsArrayBuffer(e.target.files[0]);
+                reader.readAsArrayBuffer(file);
             });
 
-            renderer.setAnimationLoop(render);
+            renderer.setAnimationLoop((timestamp, frame) => {
+                renderer.render(scene, camera);
+            });
         }
 
-        function render(timestamp, frame) {
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-
-            if (renderer.xr.isPresenting) {
-                // 1. Clear the screen once per frame
-                renderer.clear();
-
-                // 2. Render Left Eye (Handheld view on left side)
-                renderer.setViewport(0, 0, width / 2, height);
-                renderer.setScissor(0, 0, width / 2, height);
-                renderer.setScissorTest(true);
-                renderer.render(scene, camera);
-
-                // 3. Render Right Eye (The mirror copy)
-                renderer.setViewport(width / 2, 0, width / 2, height);
-                renderer.setScissor(width / 2, 0, width / 2, height);
-                renderer.setScissorTest(true);
-                renderer.render(scene, camera);
-            } else {
-                // Standard single view when not in AR
-                renderer.setViewport(0, 0, width, height);
-                renderer.setScissorTest(false);
-                renderer.render(scene, camera);
-            }
-        }
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
