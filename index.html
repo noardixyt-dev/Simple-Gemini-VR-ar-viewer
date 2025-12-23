@@ -2,61 +2,60 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Pro 6DoF Stereo</title>
+    <title>Stereo 6DoF Fixed</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #00e5ff; font-family: sans-serif; overflow: hidden; }
-        #ui { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; text-align: center; }
-        .btn { background: #00e5ff; color: #000; border: none; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; margin-top: 20px; box-shadow: 0 0 15px #00e5ff; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #ui { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; color: #00e5ff; }
+        .btn { background: #00e5ff; color: #000; border: none; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; margin-top: 20px; }
         #file-input { display: none; }
-        .upload-label { border: 2px dashed #00e5ff; padding: 15px 30px; border-radius: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h1>STEREO 6DoF V2</h1>
-        <label class="upload-label">
-            <span>📁 UPLOAD MODEL (.GLB)</span>
+        <h2>STEREO 6DoF SYSTEM</h2>
+        <label style="border: 2px dashed #00e5ff; padding: 20px; border-radius: 10px; cursor: pointer;">
+            <span>📁 LOAD MODEL (.GLB)</span>
             <input type="file" id="file-input" accept=".glb,.gltf">
         </label>
-        <p id="file-status">No model selected</p>
         <button class="btn" onclick="startEngine()">ENGAGE STEREO AR</button>
     </div>
 
-    <a-scene 
-        webxr="requiredFeatures: hit-test, local-floor; optionalFeatures: dom-overlay;"
-        vr-mode-ui="enabled: false"
-        embedded>
-        
-        <a-entity id="reticle" visible="false">
-            <a-ring color="#00e5ff" rotation="-90 0 0" radius-inner="0.08" radius-outer="0.12"></a-ring>
-        </a-entity>
+    <a-scene embedded vr-mode-ui="enabled: false">
+        <a-assets></a-assets>
 
-        <a-entity id="ar-model" visible="false" scale="0.4 0.4 0.4"></a-entity>
+        <a-entity id="ar-model" visible="false" scale="0.5 0.5 0.5"></a-entity>
 
-        <a-light type="ambient" intensity="1.2"></a-light>
+        <a-light type="ambient" intensity="1.5"></a-light>
         <a-light type="directional" position="1 2 1"></a-light>
-        <a-camera id="main-cam" position="0 1.6 0" look-controls></a-camera>
+
+        <a-entity id="rig" position="0 1.6 0">
+            <a-camera id="cam" look-controls="pointerLockEnabled: true"></a-camera>
+        </a-entity>
     </a-scene>
 
     <script>
-        const model = document.querySelector('#ar-model');
+        const modelEl = document.querySelector('#ar-model');
         const fileInput = document.querySelector('#file-input');
-        const reticle = document.querySelector('#reticle');
 
         fileInput.addEventListener('change', (e) => {
             const url = URL.createObjectURL(e.target.files[0]);
-            model.setAttribute('gltf-model', `url(${url})`);
-            document.getElementById('file-status').innerText = "Model Loaded!";
+            modelEl.setAttribute('gltf-model', `url(${url})`);
+            modelEl.setAttribute('visible', 'true');
         });
 
         async function startEngine() {
+            // 1. Permission (iOS/Android)
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                await DeviceOrientationEvent.requestPermission();
+            }
+
             try {
-                // 1. Camera Init with Aspect Fix
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720} } 
                 });
+
                 const video = document.createElement('video');
                 video.srcObject = stream;
                 video.play();
@@ -64,53 +63,37 @@
                 const scene = document.querySelector('a-scene');
                 const texture = new THREE.VideoTexture(video);
                 
-                // Fix for the "Stretched" issue:
-                // We set the texture mapping to cover the whole background proportionally
+                // ASPECT RATIO FIX: 
+                // We force the texture to "Cover" the background instead of "Fit"
+                // This prevents the stretching you were seeing.
                 texture.matrixAutoUpdate = false;
-                texture.minFilter = THREE.LinearFilter;
+                const aspect = 1280 / 720;
+                const screenAspect = (window.innerWidth / 2) / window.innerHeight;
+                if (aspect > screenAspect) {
+                    texture.matrix.setUvTransform(0, 0, screenAspect / aspect, 1, 0, 0.5, 0.5);
+                } else {
+                    texture.matrix.setUvTransform(0, 0, 1, aspect / screenAspect, 0, 0.5, 0.5);
+                }
+
                 scene.object3D.background = texture;
 
+                // 2. Hide UI and Enter Side-by-Side Mode
                 document.getElementById('ui').style.display = 'none';
-                scene.enterVR(); // Side-by-Side (SBS)
+                
+                // Force 6DoF: A-Frame's enterVR handles the SBS split and Gyro
+                scene.enterVR();
+
+                // If no model was uploaded, show a placeholder box so you can see tracking works
+                if (!modelEl.getAttribute('gltf-model')) {
+                    modelEl.setAttribute('geometry', 'primitive: box');
+                    modelEl.setAttribute('material', 'color: red');
+                    modelEl.setAttribute('visible', 'true');
+                }
 
             } catch (err) {
-                alert("HTTPS and Camera access required.");
+                alert("Please use HTTPS. Error: " + err.message);
             }
         }
-
-        // --- 6DoF Ground Tracking Logic ---
-        document.querySelector('a-scene').addEventListener('enter-vr', () => {
-            const scene = document.querySelector('a-scene');
-            const renderer = scene.renderer;
-            const session = renderer.xr.getSession();
-
-            session.requestReferenceSpace('viewer').then((space) => {
-                session.requestHitTestSource({ space }).then((source) => {
-                    window.hitSource = source;
-                });
-            });
-
-            session.addEventListener('select', () => {
-                if (reticle.getAttribute('visible')) {
-                    model.setAttribute('position', reticle.getAttribute('position'));
-                    model.setAttribute('visible', true);
-                }
-            });
-        });
-
-        // Update the floor reticle every frame
-        document.querySelector('a-scene').addEventListener('tick', () => {
-            const frame = document.querySelector('a-scene').frame;
-            if (frame && window.hitSource) {
-                const results = frame.getHitTestResults(window.hitSource);
-                if (results.length > 0) {
-                    const hit = results[0];
-                    const pose = hit.getPose(document.querySelector('a-scene').renderer.xr.getReferenceSpace());
-                    reticle.setAttribute('position', pose.transform.position);
-                    reticle.setAttribute('visible', true);
-                }
-            }
-        });
     </script>
 </body>
 </html>
