@@ -2,111 +2,102 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stereoscopic Camera VR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VR Camera SBS</title>
     <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: black;
-            overflow: hidden;
-            display: flex;
-        }
-
-        /* Container for the two "eyes" */
-        .viewport {
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        
+        /* Stereoscopic Container */
+        .sbs-container {
             display: flex;
             width: 100vw;
             height: 100vh;
         }
 
-        /* Each eye takes up half the screen */
-        .eye {
+        .eye-view {
             flex: 1;
+            height: 100%;
             overflow: hidden;
             position: relative;
-            border-right: 1px solid #222; /* Slight divider */
         }
 
         video {
-            position: absolute;
-            height: 100%;
             width: 100%;
-            object-fit: cover; /* Ensures the screen is filled */
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
+            height: 100%;
+            object-fit: cover;
         }
 
-        /* Fullscreen Toggle Button */
-        #fs-btn {
+        /* Fullscreen Toggle - Top Left */
+        #ui-layer {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            z-index: 100;
-            padding: 12px 20px;
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid white;
-            border-radius: 5px;
-            cursor: pointer;
-            font-family: sans-serif;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
         }
 
-        #fs-btn:hover {
-            background: rgba(255, 255, 255, 0.4);
+        button {
+            padding: 15px 25px;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.3);
+            color: white;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
         }
+
+        button:active { background: rgba(255, 255, 255, 0.6); }
     </style>
 </head>
 <body>
 
-    <button id="fs-btn">Toggle Fullscreen</button>
+    <div id="ui-layer">
+        <button id="toggleFS">FULLSCREEN</button>
+    </div>
 
-    <div class="viewport">
-        <div class="eye"><video id="leftEye" autoplay playsinline muted></video></div>
-        <div class="eye"><video id="rightEye" autoplay playsinline muted></video></div>
+    <div class="sbs-container">
+        <div class="eye-view"><video id="left" autoplay playsinline muted></video></div>
+        <div class="eye-view"><video id="right" autoplay playsinline muted></video></div>
     </div>
 
     <script>
-        const leftVideo = document.getElementById('leftEye');
-        const rightVideo = document.getElementById('rightEye');
-        const fsBtn = document.getElementById('fs-btn');
+        const vLeft = document.getElementById('left');
+        const vRight = document.getElementById('right');
+        const btn = document.getElementById('toggleFS');
 
-        // Request highest resolution possible
+        // Requesting Max Hardware Specs
         const constraints = {
             video: {
-                width: { ideal: 4096 },
-                height: { ideal: 2160 },
-                facingMode: "environment" // Uses back camera on mobile
-            },
-            audio: false
+                width: { min: 1280, ideal: 3840, max: 7680 },
+                height: { min: 720, ideal: 2160, max: 4320 },
+                facingMode: "environment",
+                frameRate: { ideal: 60 }
+            }
         };
 
-        async function initCamera() {
+        async function startStream() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                leftVideo.srcObject = stream;
-                rightVideo.srcObject = stream;
-            } catch (err) {
-                console.error("Error accessing camera: ", err);
-                alert("Camera access denied or not supported.");
+                vLeft.srcObject = stream;
+                vRight.srcObject = stream;
+            } catch (e) {
+                console.error("Camera Error:", e);
+                alert("Camera failed. Check permissions/HTTPS.");
             }
         }
 
-        // Fullscreen Toggle Logic
-        fsBtn.addEventListener('click', () => {
+        btn.addEventListener('click', () => {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(err => {
-                    alert(`Error attempting to enable full-screen mode: ${err.message}`);
+                    console.log(err);
                 });
             } else {
                 document.exitFullscreen();
             }
         });
 
-        initCamera();
+        startStream();
     </script>
 </body>
 </html>
+w
