@@ -2,104 +2,116 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Stereo 6DoF Tracker</title>
+    <title>Pro 6DoF Stereo</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #00e5ff; font-family: sans-serif; }
-        #ui { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; }
-        .btn { background: #00e5ff; color: #000; border: none; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; }
-        input[type="file"] { display: none; }
+        body { margin: 0; background: #000; color: #00e5ff; font-family: sans-serif; overflow: hidden; }
+        #ui { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; text-align: center; }
+        .btn { background: #00e5ff; color: #000; border: none; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; margin-top: 20px; box-shadow: 0 0 15px #00e5ff; }
+        #file-input { display: none; }
+        .upload-label { border: 2px dashed #00e5ff; padding: 15px 30px; border-radius: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h1>6DoF STEREO AR</h1>
-        <label style="border: 2px dashed #00e5ff; padding: 20px; border-radius: 10px; cursor: pointer; margin-bottom: 20px;">
-            <span>📁 UPLOAD .GLB</span>
-            <input type="file" id="file-upload" accept=".glb,.gltf">
+        <h1>STEREO 6DoF V2</h1>
+        <label class="upload-label">
+            <span>📁 UPLOAD MODEL (.GLB)</span>
+            <input type="file" id="file-input" accept=".glb,.gltf">
         </label>
-        <button class="btn" onclick="startAR()">START ENGINE</button>
+        <p id="file-status">No model selected</p>
+        <button class="btn" onclick="startEngine()">ENGAGE STEREO AR</button>
     </div>
 
     <a-scene 
-        webxr="requiredFeatures: hit-test, local-floor; optionalFeatures: dom-overlay;" 
-        embedded 
-        vr-mode-ui="enabled: false">
+        webxr="requiredFeatures: hit-test, local-floor; optionalFeatures: dom-overlay;"
+        vr-mode-ui="enabled: false"
+        embedded>
         
-        <a-assets id="assets"></a-assets>
-
         <a-entity id="reticle" visible="false">
-            <a-ring color="#00e5ff" rotation="-90 0 0" radius-inner="0.1" radius-outer="0.15"></a-ring>
+            <a-ring color="#00e5ff" rotation="-90 0 0" radius-inner="0.08" radius-outer="0.12"></a-ring>
         </a-entity>
 
-        <a-entity id="target-object" visible="false" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity id="ar-model" visible="false" scale="0.4 0.4 0.4"></a-entity>
 
-        <a-light type="ambient" intensity="1"></a-light>
+        <a-light type="ambient" intensity="1.2"></a-light>
         <a-light type="directional" position="1 2 1"></a-light>
+        <a-camera id="main-cam" position="0 1.6 0" look-controls></a-camera>
     </a-scene>
 
     <script>
-        const model = document.querySelector('#target-object');
+        const model = document.querySelector('#ar-model');
+        const fileInput = document.querySelector('#file-input');
         const reticle = document.querySelector('#reticle');
-        const fileInput = document.querySelector('#file-upload');
-        let hitTestResults = null;
 
-        // 1. File Upload Logic
         fileInput.addEventListener('change', (e) => {
             const url = URL.createObjectURL(e.target.files[0]);
             model.setAttribute('gltf-model', `url(${url})`);
+            document.getElementById('file-status').innerText = "Model Loaded!";
         });
 
-        async function startAR() {
-            const scene = document.querySelector('a-scene');
-            
-            // 2. Camera Passthrough
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-            const video = document.createElement('video');
-            video.srcObject = stream;
-            video.play();
-            
-            // Apply camera to background for stereo passthrough
-            const texture = new THREE.VideoTexture(video);
-            scene.object3D.background = texture;
+        async function startEngine() {
+            try {
+                // 1. Camera Init with Aspect Fix
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720} } 
+                });
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
 
-            document.getElementById('ui').style.display = 'none';
-            scene.enterVR(); // Switches to Side-by-Side view
+                const scene = document.querySelector('a-scene');
+                const texture = new THREE.VideoTexture(video);
+                
+                // Fix for the "Stretched" issue:
+                // We set the texture mapping to cover the whole background proportionally
+                texture.matrixAutoUpdate = false;
+                texture.minFilter = THREE.LinearFilter;
+                scene.object3D.background = texture;
+
+                document.getElementById('ui').style.display = 'none';
+                scene.enterVR(); // Side-by-Side (SBS)
+
+            } catch (err) {
+                alert("HTTPS and Camera access required.");
+            }
         }
 
-        // 3. 6DoF Hit-Testing (The "Pinned to Ground" Math)
-        document.querySelector('a-scene').addEventListener('render-target-loaded', () => {
-            const renderer = document.querySelector('a-scene').renderer;
-            renderer.xr.addEventListener('sessionstart', () => {
-                const session = renderer.xr.getSession();
-                session.requestReferenceSpace('viewer').then((space) => {
-                    session.requestHitTestSource({ space }).then((source) => {
-                        window.hitTestSource = source;
-                    });
+        // --- 6DoF Ground Tracking Logic ---
+        document.querySelector('a-scene').addEventListener('enter-vr', () => {
+            const scene = document.querySelector('a-scene');
+            const renderer = scene.renderer;
+            const session = renderer.xr.getSession();
+
+            session.requestReferenceSpace('viewer').then((space) => {
+                session.requestHitTestSource({ space }).then((source) => {
+                    window.hitSource = source;
                 });
+            });
+
+            session.addEventListener('select', () => {
+                if (reticle.getAttribute('visible')) {
+                    model.setAttribute('position', reticle.getAttribute('position'));
+                    model.setAttribute('visible', true);
+                }
             });
         });
 
-        // Frame loop to update reticle and object position
+        // Update the floor reticle every frame
         document.querySelector('a-scene').addEventListener('tick', () => {
             const frame = document.querySelector('a-scene').frame;
-            if (frame && window.hitTestSource) {
-                const results = frame.getHitTestResults(window.hitTestSource);
+            if (frame && window.hitSource) {
+                const results = frame.getHitTestResults(window.hitSource);
                 if (results.length > 0) {
                     const hit = results[0];
                     const pose = hit.getPose(document.querySelector('a-scene').renderer.xr.getReferenceSpace());
                     reticle.setAttribute('position', pose.transform.position);
                     reticle.setAttribute('visible', true);
-                    
-                    // Tap to place (simplified for this demo)
-                    window.addEventListener('click', () => {
-                        model.setAttribute('position', pose.transform.position);
-                        model.setAttribute('visible', true);
-                    }, { once: true });
                 }
             }
         });
     </script>
 </body>
 </html>
+
