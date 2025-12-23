@@ -3,53 +3,63 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>FORCED SCALE SBS</title>
+    <title>SBS 10px Offset & Gap</title>
     <style>
-        /* ALL PREVIOUS LOGIC REMOVED - NEW SYSTEM BELOW */
+        :root {
+            /* Window size */
+            --win-w: 450px; 
+            --win-h: calc(var(--win-w) / 1.777); 
+            
+            /* The 10 pixel gap between windows */
+            --gap: 10px;
+
+            /* The 10 pixel shift to the left of center */
+            --left-shift: 10px; 
+        }
+
         body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            background: #000 !important; overflow: hidden;
-            display: flex; justify-content: center; align-items: center;
+            margin: 0; padding: 0; width: 100vw; height: 100vh; 
+            background: #000 !important; overflow: hidden; 
         }
 
         #fs-btn {
             position: fixed; top: 10px; left: 10px; z-index: 9999;
-            padding: 20px; background: white; color: black; 
-            border: none; font-weight: bold; border-radius: 5px;
+            padding: 15px; background: white; color: black; border: none;
+            border-radius: 4px; font-weight: bold; cursor: pointer;
         }
 
-        /* This is the master control. 
-           Change '1.5' to '2.0' if you want it even BIGGER.
-        */
-        .master-scaler {
+        .master-container {
+            position: absolute;
+            top: 50%;
+            /* Starts at 50% (center) then subtracts the 10px shift */
+            left: calc(50% - var(--left-shift));
+            transform: translate(-50%, -50%);
             display: flex;
-            transform: scale(1.8); 
-            gap: 0;
+            gap: var(--gap); 
         }
 
         .eye {
-            width: 55px; /* We use a base unit and scale it up above */
-            height: 30.93px; /* Exact 16:9 ratio */
-            background: black;
+            width: var(--win-w);
+            height: var(--win-h);
+            background: #000;
             overflow: hidden;
         }
 
         video {
             width: 100%;
             height: 100%;
-            object-fit: fill; /* Forces 16:9 frame into the box */
+            object-fit: fill; 
             display: block;
         }
 
-        /* This ensures no hidden margins or padding break the center touch */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :fullscreen #fs-btn { opacity: 0.1; }
     </style>
 </head>
 <body>
 
     <button id="fs-btn" onclick="toggleFS()">FULLSCREEN</button>
 
-    <div class="master-scaler">
+    <div class="master-container">
         <div class="eye"><video id="v1" autoplay playsinline muted></video></div>
         <div class="eye"><video id="v2" autoplay playsinline muted></video></div>
     </div>
@@ -57,25 +67,19 @@
     <script>
         async function start() {
             try {
-                // Forcing the absolute highest resolution stream
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: "environment", 
-                        width: { min: 1280, ideal: 3840 }, 
-                        height: { min: 720, ideal: 2160 } 
-                    }
+                    video: { facingMode: "environment", width: { ideal: 3840 }, height: { ideal: 2160 } }
                 });
                 document.getElementById('v1').srcObject = stream;
                 document.getElementById('v2').srcObject = stream;
             } catch (e) {
-                alert("Please use HTTPS/SSL for camera access.");
+                alert("Please use HTTPS for camera access.");
             }
         }
 
         function toggleFS() {
-            const doc = document.documentElement;
             if (!document.fullscreenElement) {
-                doc.requestFullscreen();
+                document.documentElement.requestFullscreen();
             } else {
                 document.exitFullscreen();
             }
