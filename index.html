@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Stereo AR Viewer</title>
+    <title>Stereo AR VIO</title>
     <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR@master/dist/alva_ar.js"></script>
     <script type="importmap">
         {
@@ -16,19 +16,24 @@
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; color: #00e5ff; }
         #three-canvas { position: absolute; inset: 0; z-index: 10; }
-        #ui { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .btn { background: #00e5ff; color: #000; padding: 20px 45px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; }
+        #ui { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        .btn { background: #00e5ff; color: #000; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; }
         #rotate-overlay { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; }
         @media (orientation: portrait) { #rotate-overlay { display: flex; } }
+        .progress-bar { width: 200px; height: 4px; background: #333; margin-top: 20px; border-radius: 2px; overflow: hidden; }
+        #progress-fill { width: 0%; height: 100%; background: #00e5ff; transition: width 0.3s; }
     </style>
 </head>
 <body>
     <div id="rotate-overlay"><h2>ROTATE TO LANDSCAPE</h2></div>
     <canvas id="three-canvas"></canvas>
+    
     <div id="ui">
-        <h1>VIO STEREO SYSTEM</h1>
-        <p id="msg">Awaiting System Load...</p>
-        <button class="btn" id="startBtn">START ENGINE</button>
+        <h1>VIO STEREO AR</h1>
+        <p id="msg">Initializing Engine...</p>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <br>
+        <button class="btn" id="startBtn" style="display:none;">START ENGINE</button>
     </div>
 
     <script type="module">
@@ -38,19 +43,23 @@
         let alva, scene, bgScene, renderer, video, cameraL, cameraR, bgCamera;
         let trackCanvas, trackCtx, videoTexture;
         let deviceRot = new THREE.Quaternion();
-        const IPD = 0.064; 
+        const IPD = 0.064;
+
+        // 1. Wait for everything to load before showing the button
+        const checkReady = setInterval(() => {
+            if (typeof AlvaAR !== 'undefined') {
+                clearInterval(checkReady);
+                document.getElementById('progress-fill').style.width = "100%";
+                document.getElementById('msg').innerText = "System Ready. Host must be HTTPS.";
+                document.getElementById('startBtn').style.display = "block";
+            }
+        }, 500);
 
         async function init() {
-            // Check if the library is ready
-            if (typeof AlvaAR === 'undefined') {
-                document.getElementById('msg').innerText = "Library not loaded. Please refresh.";
-                return;
-            }
-
             document.getElementById('msg').innerText = "Requesting Access...";
-
+            
             try {
-                // 1. Camera Access
+                // A. CAMERA
                 video = document.createElement('video');
                 video.autoplay = video.muted = video.playsInline = true;
                 const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -59,16 +68,16 @@
                 video.srcObject = stream;
                 await video.play();
 
-                // 2. Sensor Permissions (Important for iOS)
+                // B. SENSORS (Critical for "Awaiting Permission" issue)
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const status = await DeviceOrientationEvent.requestPermission();
-                    if (status !== 'granted') {
-                        document.getElementById('msg').innerText = "Sensor Access Denied.";
+                    const response = await DeviceOrientationEvent.requestPermission();
+                    if (response !== 'granted') {
+                        document.getElementById('msg').innerText = "Sensor Permission Denied!";
                         return;
                     }
                 }
 
-                // 3. Sensor Listener
+                // C. ORIENTATION LISTENER
                 window.addEventListener('deviceorientation', (e) => {
                     const alpha = THREE.MathUtils.degToRad(e.alpha);
                     const beta = THREE.MathUtils.degToRad(e.beta);
@@ -79,7 +88,7 @@
                     deviceRot.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient));
                 });
 
-                // 4. Initialize Tracking
+                // D. SLAM ENGINE
                 trackCanvas = document.createElement('canvas');
                 trackCanvas.width = 1280; trackCanvas.height = 720;
                 trackCtx = trackCanvas.getContext('2d');
@@ -88,8 +97,8 @@
                 setupThree();
                 document.getElementById('ui').style.display = 'none';
                 animate();
-            } catch (e) {
-                document.getElementById('msg').innerText = "Error: " + e.message;
+            } catch (err) {
+                document.getElementById('msg').innerText = "Error: " + err.message;
             }
         }
 
@@ -130,9 +139,9 @@
 
             const w = window.innerWidth, h = window.innerHeight;
             renderer.clear();
-            renderer.setViewport(0, 0, w/2, h);
+            renderer.setViewport(0, 0, w / 2, h);
             renderer.render(bgScene, bgCamera); renderer.render(scene, cameraL);
-            renderer.setViewport(w/2, 0, w/2, h);
+            renderer.setViewport(w / 2, 0, w / 2, h);
             renderer.render(bgScene, bgCamera); renderer.render(scene, cameraR);
         }
 
@@ -140,3 +149,4 @@
     </script>
 </body>
 </html>
+w
