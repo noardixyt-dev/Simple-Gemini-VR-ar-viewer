@@ -2,13 +2,16 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Noardix Pro AR-VR Cloner</title>
+    <title>Noardix AR-Cloner V10</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
-        #ui { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; color: #00e5ff; font-family: sans-serif; }
+        #ui { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; 
+              display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.8); 
+              padding: 15px; border-radius: 15px; color: #00e5ff; font-family: sans-serif; }
         button { background: #00e5ff; border: none; padding: 12px 24px; border-radius: 20px; font-weight: bold; margin: 5px; cursor: pointer; }
+        /* The Cardboard Lens Look */
         #lens-mask {
             position: fixed; inset: 0; pointer-events: none; z-index: 500;
             background: radial-gradient(circle at 25% 50%, transparent 35%, black 65%),
@@ -18,10 +21,10 @@
 </head>
 <body>
     <div id="ui">
-        <strong>STEP 1:</strong> <button id="start-btn">ACTIVATE ARCORE</button>
-        <strong>STEP 2:</strong> <button onclick="document.getElementById('file-input').click()">IMPORT MODEL</button>
+        <strong>NOARDIX AR-CLONER</strong>
+        <button id="start-btn">1. ACTIVATE AR</button>
+        <button onclick="document.getElementById('file-input').click()">2. IMPORT MODEL</button>
         <input type="file" id="file-input" accept=".glb" style="display:none">
-        <p style="font-size: 11px;">Find floor -> Tap screen -> Slide into Cardboard</p>
     </div>
     <div id="lens-mask"></div>
 
@@ -31,19 +34,19 @@
         let hitTestSourceRequested = false;
 
         async function init() {
-            // Setup WebGL Renderer
+            // Setup Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // This lets us use the phone's AR engine
+            renderer.xr.enabled = true; // Use Native Phone AR Engine
             document.body.appendChild(renderer.domElement);
 
-            // 1. THE ARCORE SCENE (The tracking happens here)
+            // 1. THE AR SCENE (Master Tracking)
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
             scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
 
-            // Finding the floor ring (Reticle)
+            // Floor Reticle
             reticle = new THREE.Mesh(
                 new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
                 new THREE.MeshBasicMaterial({ color: 0x00e5ff })
@@ -52,20 +55,21 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // 2. THE DUAL-EYE RENDERER (The Cloner)
+            // 2. THE MIRROR (Render Target)
+            // This captures the "Finished" AR scene before it hits the screen
             renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+            
+            // 3. THE DISPLAY (Side-by-Side)
             finalScene = new THREE.Scene();
             finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            
-            // This material is the "Mirror" of the finished AR scene
             const material = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
             
             const leftEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
-            leftEye.position.set(-0.5, 0, 0); // Left half of screen
+            leftEye.position.set(-0.5, 0, 0);
             finalScene.add(leftEye);
 
             const rightEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
-            rightEye.position.set(0.5, 0, 0); // Right half of screen
+            rightEye.position.set(0.5, 0, 0);
             finalScene.add(rightEye);
 
             // Activate AR Session
@@ -78,7 +82,7 @@
                 renderer.xr.setSession(session);
             });
 
-            // Model Import
+            // File Loading
             document.getElementById('file-input').addEventListener('change', (e) => {
                 const url = URL.createObjectURL(e.target.files[0]);
                 new THREE.GLTFLoader().load(url, (gltf) => {
@@ -118,25 +122,25 @@
                 }
             }
 
-            // --- THE TRICK ---
-            // 1. Draw the "Perfectly Tracked" AR scene into the hidden buffer
+            // DUAL-EYE MIRROR TRICK
+            // Step 1: Render the ARCore tracked scene into our hidden "photo"
             renderer.setRenderTarget(renderTarget);
             renderer.render(scene, camera);
             
-            // 2. Clear the buffer and draw the buffer twice on the screen
+            // Step 2: Draw that "photo" twice on the screen
             renderer.setRenderTarget(null);
             renderer.render(finalScene, finalCamera);
         }
 
-        window.addEventListener('click', () => {
-            if (reticle.visible && model) {
-                model.position.setFromMatrixPosition(reticle.matrix);
-                model.visible = true;
-            }
-        });
+            // Tap to place
+            window.addEventListener('click', () => {
+                if (reticle.visible && model) {
+                    model.position.setFromMatrixPosition(reticle.matrix);
+                    model.visible = true;
+                }
+            });
 
         init();
     </script>
 </body>
 </html>
-
