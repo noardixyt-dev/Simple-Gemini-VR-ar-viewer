@@ -1,31 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="utf-8">
-    <title>Noardix AR-VR Stereo Cloner</title>
+    <title>Noardix Pro AR-Mirror</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #ui { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; 
-              display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.8); 
-              padding: 15px; border-radius: 15px; color: #00e5ff; text-align: center; }
-        button { background: #00e5ff; border: none; padding: 12px 24px; border-radius: 20px; 
-                 font-weight: bold; margin: 5px; cursor: pointer; color: #000; }
-        #lens-mask { position: fixed; inset: 0; pointer-events: none; z-index: 500; display: none;
-            background: radial-gradient(circle at 25% 50%, transparent 30%, black 70%),
-                        radial-gradient(circle at 75% 50%, transparent 30%, black 70%); }
-        canvas { display: block; }
+        body { margin: 0; overflow: hidden; background: #000; color: #00e5ff; font-family: sans-serif; }
+        #ui { position: fixed; top: 10%; left: 50%; transform: translateX(-50%); z-index: 1000; text-align: center; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 20px; border: 2px solid #00e5ff; }
+        button { background: #00e5ff; border: none; padding: 15px 30px; border-radius: 30px; font-weight: bold; cursor: pointer; font-size: 16px; margin: 10px; }
+        #lens-mask { position: fixed; inset: 0; pointer-events: none; z-index: 500; display: none; background: radial-gradient(circle at 25% 50%, transparent 35%, black 65%), radial-gradient(circle at 75% 50%, transparent 35%, black 65%); }
+        #warning { position: fixed; inset: 0; background: black; z-index: 2000; display: flex; align-items: center; justify-content: center; visibility: visible; }
+        @media screen and (orientation: landscape) { #warning { visibility: hidden; } }
     </style>
 </head>
 <body>
+    <div id="warning"><h1>ROTATE TO LANDSCAPE</h1></div>
     <div id="ui">
-        <strong>NOARDIX VR-AR TRACKER</strong><br>
-        <button id="start-btn">1. START AR SESSION</button>
-        <button onclick="document.getElementById('file-input').click()">2. IMPORT MODEL</button>
+        <h2>NOARDIX SBS-AR</h2>
+        <button id="start-btn">START AR SESSION</button><br>
+        <button onclick="document.getElementById('file-input').click()">IMPORT .GLB MODEL</button>
         <input type="file" id="file-input" accept=".glb" style="display:none">
-        <p style="font-size: 11px;">1. Find Floor -> 2. Tap to Place -> 3. Put in Cardboard</p>
     </div>
     <div id="lens-mask"></div>
 
@@ -35,45 +31,41 @@
         let hitTestSourceRequested = false;
 
         async function init() {
-            // Setup Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            // RENDERER SETUP
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; 
+            renderer.xr.enabled = true; // Use ARCore native tracking
             document.body.appendChild(renderer.domElement);
 
-            // 1. THE AR BRAIN (Master Scene)
+            // 1. MASTER AR SCENE (The tracking engine)
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
             scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
 
-            // Floor Finding Ring
-            reticle = new THREE.Mesh(
-                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
-                new THREE.MeshBasicMaterial({ color: 0x00e5ff })
-            );
+            // Floor Reticle
+            reticle = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x00e5ff }));
             reticle.matrixAutoUpdate = false;
             reticle.visible = false;
             scene.add(reticle);
 
-            // 2. THE DUAL-EYE MIRROR (SBS Setup)
+            // 2. THE MIRROR (Captures the AR Mode)
             renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+            
+            // 3. STEREO DISPLAY (Draws the mirror twice)
             finalScene = new THREE.Scene();
             finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            const mirrorMat = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
             
-            const mirrorMaterial = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
-            
-            // Left Eye
-            const leftEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), mirrorMaterial);
+            const leftEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), mirrorMat);
             leftEye.position.set(-0.5, 0, 0);
             finalScene.add(leftEye);
 
-            // Right Eye
-            const rightEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), mirrorMaterial);
+            const rightEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), mirrorMat);
             rightEye.position.set(0.5, 0, 0);
             finalScene.add(rightEye);
 
-            // Start AR Session
+            // BUTTON LOGIC
             document.getElementById('start-btn').addEventListener('click', async () => {
                 const session = await navigator.xr.requestSession('immersive-ar', {
                     requiredFeatures: ['hit-test'],
@@ -82,10 +74,10 @@
                 });
                 renderer.xr.setSession(session);
                 document.getElementById('lens-mask').style.display = 'block';
-                document.getElementById('ui').style.opacity = "0.3";
+                document.getElementById('ui').style.display = 'none';
             });
 
-            // Model Importer
+            // IMPORT GLB
             document.getElementById('file-input').addEventListener('change', (e) => {
                 const url = URL.createObjectURL(e.target.files[0]);
                 new THREE.GLTFLoader().load(url, (gltf) => {
@@ -104,11 +96,10 @@
                 const referenceSpace = renderer.xr.getReferenceSpace();
                 const session = renderer.xr.getSession();
 
+                // Get Floor Tracking (Hit-test)
                 if (!hitTestSourceRequested) {
                     session.requestReferenceSpace('viewer').then((refSpace) => {
-                        session.requestHitTestSource({ space: refSpace }).then((source) => {
-                            hitTestSource = source;
-                        });
+                        session.requestHitTestSource({ space: refSpace }).then((source) => { hitTestSource = source; });
                     });
                     hitTestSourceRequested = true;
                 }
@@ -125,16 +116,16 @@
                 }
             }
 
-            // THE MIRROR TRICK
-            // 1. Render the AR tracked world into the hidden virtual buffer
+            // THE HACK: Step 1: Draw the full AR Mode to the hidden target
             renderer.setRenderTarget(renderTarget);
             renderer.render(scene, camera);
             
-            // 2. Draw that buffer twice onto the phone screen
+            // Step 2: Draw the mirror result to the actual screen side-by-side
             renderer.setRenderTarget(null);
             renderer.render(finalScene, finalCamera);
         }
 
+        // Place object on tap
         window.addEventListener('click', () => {
             if (reticle.visible && model) {
                 model.position.setFromMatrixPosition(reticle.matrix);
@@ -146,4 +137,3 @@
     </script>
 </body>
 </html>
-a
