@@ -3,57 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SBS Final</title>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100vw; height: 100vh; 
-            background: #000 !important; overflow: hidden; 
+            background: #000; overflow: hidden; 
             display: flex; justify-content: center; align-items: center;
         }
-
-        /* 10px LEFT SHIFT */
-        .master-container {
+        .master {
             display: flex;
-            gap: 10px; /* 10px GAP */
-            transform: translateX(-10px); 
+            gap: 10px;
+            transform: translateX(-10px);
         }
-
-        .viewport {
+        .view {
             width: 450px; 
-            height: 253.2px; /* 16:9 */
-            background: #000;
-            overflow: hidden;
+            height: 253.2px;
         }
-
         video { width: 100%; height: 100%; object-fit: fill; display: block; }
     </style>
 </head>
 <body>
-
-    <div class="master-container">
-        <div class="viewport"><video id="vid1" autoplay playsinline muted></video></div>
-        <div class="viewport"><video id="vid2" autoplay playsinline muted></video></div>
+    <div class="master">
+        <div class="view"><video id="v1" autoplay playsinline muted></video></div>
+        <div class="view"><video id="v2" autoplay playsinline muted></video></div>
     </div>
-
     <script>
         async function start() {
-            try {
-                const s = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 4096 } }
-                });
-                document.getElementById('vid1').srcObject = s;
-                document.getElementById('vid2').srcObject = s;
-                
-                document.onclick = () => {
-                    if (!document.fullscreenElement) {
-                        document.documentElement.requestFullscreen();
-                    }
-                };
-            } catch (e) {
-                console.error(e);
-            }
+            const s = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment", width: {ideal: 4096}}});
+            document.getElementById('v1').srcObject = s;
+            document.getElementById('v2').srcObject = s;
+            document.onclick = () => document.documentElement.requestFullscreen();
         }
         start();
     </script>
 </body>
 </html>
+
