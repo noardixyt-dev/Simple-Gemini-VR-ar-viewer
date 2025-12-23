@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Pixel Coordinate Tracker</title>
+    <title>Absolute Pixel Precision</title>
     <style>
         :root {
             --win-w: 450px; 
@@ -14,113 +14,124 @@
 
         body, html { 
             margin: 0; padding: 0; width: 100vw; height: 100vh; 
-            background: #000 !important; overflow: hidden; font-family: 'Courier New', monospace;
+            background: #000 !important; overflow: hidden; 
+            font-family: 'Courier New', monospace;
+            display: flex; justify-content: center; align-items: center;
         }
 
-        /* The Data Card */
         #data-card {
-            position: fixed; top: 80px; left: 20px; background: rgba(0,0,0,0.95);
-            color: #00ff00; padding: 20px; border: 2px solid #00ff00; 
-            font-size: 18px; z-index: 1000; pointer-events: none;
-            line-height: 1.5;
+            position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.9);
+            color: #00ff00; padding: 15px; border: 1px solid #00ff00; 
+            font-size: 14px; z-index: 1000; pointer-events: none;
         }
 
         #fs-btn {
-            position: fixed; top: 15px; left: 15px; z-index: 1001;
-            padding: 12px 20px; background: #00ff00; color: #000; border: none; font-weight: bold;
+            position: fixed; top: 20px; left: 20px; z-index: 1001;
+            padding: 15px; background: #fff; border: none; font-weight: bold;
         }
 
+        /* The container shifted 10px left */
         .master-container {
-            position: absolute;
-            top: 50%;
-            left: calc(50% - var(--shift-left));
-            transform: translate(-50%, -50%);
             display: flex;
-            gap: var(--gap); 
+            gap: var(--gap);
+            transform: translateX(calc(-1 * var(--shift-left)));
         }
 
         .eye {
             width: var(--win-w);
             height: var(--win-h);
-            background: #111;
             position: relative;
-            overflow: hidden;
+            background: #111;
+            /* Flex center ensures the dot is exactly in the middle */
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
 
-        /* Red Center Point */
+        video {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: fill;
+        }
+
+        /* Red dot - centered via Flexbox parent */
         .dot {
-            position: absolute; top: 50%; left: 50%;
-            width: 8px; height: 8px; background: red;
-            border-radius: 50%; transform: translate(-50%, -50%);
-            z-index: 10; box-shadow: 0 0 10px red;
+            width: 10px;
+            height: 10px;
+            background: red;
+            border-radius: 50%;
+            z-index: 100;
+            box-shadow: 0 0 10px red;
+            pointer-events: none;
         }
-
-        video { width: 100%; height: 100%; object-fit: fill; display: block; }
     </style>
 </head>
 <body>
 
-    <button id="fs-btn" onclick="toggleFS()">ENTER FULLSCREEN</button>
+    <button id="fs-btn" onclick="toggleFS()">FULLSCREEN</button>
 
     <div id="data-card">
-        <b>DISPLAY RESOLUTION:</b> <span id="res"></span><br>
-        <hr style="border-color: #00ff00; margin: 15px 0;">
-        <b>LEFT EYE CENTER PIXEL:</b><br>
-        X: <span id="l-x"></span> | Y: <span id="l-y"></span><br>
-        <br>
-        <b>RIGHT EYE CENTER PIXEL:</b><br>
-        X: <span id="r-x"></span> | Y: <span id="r-y"></span>
+        <b>DETECTED RESOLUTION:</b> <span id="res">0x0</span><br>
+        <b>DEVICE PIXEL RATIO:</b> <span id="dpr">0</span><br>
+        <hr style="border:0; border-top:1px solid #00ff00; margin:10px 0;">
+        <b>LEFT WINDOW CENTER (Pixel):</b><br>
+        X: <span id="l-x">0</span> | Y: <span id="l-y">0</span><br><br>
+        <b>RIGHT WINDOW CENTER (Pixel):</b><br>
+        X: <span id="r-x">0</span> | Y: <span id="r-y">0</span>
     </div>
 
     <div class="master-container">
         <div class="eye" id="L-eye">
-            <div class="dot"></div>
             <video id="v1" autoplay playsinline muted></video>
+            <div class="dot"></div>
         </div>
         <div class="eye" id="R-eye">
-            <div class="dot"></div>
             <video id="v2" autoplay playsinline muted></video>
+            <div class="dot"></div>
         </div>
     </div>
 
     <script>
-        function updatePixelCoords() {
-            const lEye = document.getElementById('L-eye').getBoundingClientRect();
-            const rEye = document.getElementById('R-eye').getBoundingClientRect();
+        function update() {
+            const lDot = document.getElementById('L-eye').querySelector('.dot').getBoundingClientRect();
+            const rDot = document.getElementById('R-eye').querySelector('.dot').getBoundingClientRect();
             
-            // Calculate absolute pixel center for Left Eye
-            const lx = Math.round(lEye.left + (lEye.width / 2));
-            const ly = Math.round(lEye.top + (lEye.height / 2));
-            
-            // Calculate absolute pixel center for Right Eye
-            const rx = Math.round(rEye.left + (rEye.width / 2));
-            const ry = Math.round(rEye.top + (rEye.height / 2));
+            // Get screen resolution factoring in the Device Pixel Ratio (Retina/HD screens)
+            const dpr = window.devicePixelRatio || 1;
+            const screenW = Math.round(window.innerWidth * dpr);
+            const screenH = Math.round(window.innerHeight * dpr);
 
-            document.getElementById('res').innerText = `${window.innerWidth} x ${window.innerHeight}`;
+            document.getElementById('res').innerText = `${screenW} x ${screenH}`;
+            document.getElementById('dpr').innerText = dpr.toFixed(2);
+
+            // Calculate center of the actual red dots
+            document.getElementById('l-x').innerText = Math.round((lDot.left + lDot.width/2) * dpr);
+            document.getElementById('l-y').innerText = Math.round((lDot.top + lDot.height/2) * dpr);
             
-            document.getElementById('l-x').innerText = lx;
-            document.getElementById('l-y').innerText = ly;
-            
-            document.getElementById('r-x').innerText = rx;
-            document.getElementById('r-y').innerText = ry;
+            document.getElementById('r-x').innerText = Math.round((rDot.left + rDot.width/2) * dpr);
+            document.getElementById('r-y').innerText = Math.round((rDot.top + rDot.height/2) * dpr);
         }
 
         async function start() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 3840 }, height: { ideal: 2160 } }
+                    video: { facingMode: "environment", width: { ideal: 4096 }, height: { ideal: 2160 } }
                 });
                 document.getElementById('v1').srcObject = stream;
                 document.getElementById('v2').srcObject = stream;
-                // Update coordinates 10 times per second
-                setInterval(updatePixelCoords, 100);
-            } catch (e) { alert("HTTPS/SSL Required for camera."); }
+                setInterval(update, 100);
+            } catch (e) { alert("Camera Error: Check HTTPS/Permissions"); }
         }
 
-        function toggleFS() { document.documentElement.requestFullscreen(); }
-        
+        function toggleFS() {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+            else document.exitFullscreen();
+        }
+
         start();
-        window.onresize = updatePixelCoords;
+        window.onresize = update;
     </script>
 </body>
 </html>
+
