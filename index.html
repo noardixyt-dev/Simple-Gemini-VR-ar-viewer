@@ -2,114 +2,71 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mirror Stereo AR</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+    <title>Noardix Stereo AR V5</title>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #ui { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; color: #00e5ff; }
-        .btn { background: #00e5ff; color: #000; border: none; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; margin-top: 20px; }
-        input[type="file"] { display: none; }
+        #ui-overlay {
+            position: fixed; top: 10px; left: 10px; z-index: 9999;
+            background: rgba(0,0,0,0.7); color: white; padding: 10px; border-radius: 5px;
+        }
+        .buttons { margin-top: 10px; }
     </style>
 </head>
-<body>
+<body style="margin: 0; overflow: hidden;">
 
-    <div id="ui">
-        <h1>Ar Vr Viewer</h1>
-        <label style="border: 2px dashed #00e5ff; padding: 20px; border-radius: 10px; cursor: pointer;">
-            <span>📁 IMPORT .GLB MODEL</span>
-            <input type="file" id="file-input" accept=".glb,.gltf">
-        </label>
-        <button class="btn" onclick="start()">START DUAL-VIEW</button>
+    <div id="ui-overlay">
+        <strong>NOARDIX VR-AR</strong><br>
+        <input type="file" id="file-input" accept=".glb" style="display:none">
+        <button onclick="document.getElementById('file-input').click()">📁 IMPORT GLB</button>
+        <p style="font-size: 10px;">1. Point at Hiro Marker<br>2. Tap VR Icon (Bottom Right)</p>
     </div>
 
-    <canvas id="c"></canvas>
+    <a-scene 
+        embedded 
+        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+        vr-mode-ui="enabled: true">
+        
+        <a-assets id="asset-holder"></a-assets>
+
+        <a-marker preset="hiro" id="marker">
+            <a-entity id="model-container" rotation="0 0 0">
+                <a-box id="placeholder" position="0 0.5 0" material="color: #00e5ff; opacity: 0.8;"></a-box>
+            </a-entity>
+        </a-marker>
+
+        <a-entity camera look-controls wasd-controls></a-entity>
+        
+    </a-scene>
 
     <script>
-        let renderer, scene, camera, videoTexture, model, renderTarget;
-        let finalScene, finalCamera;
+        const fileInput = document.getElementById('file-input');
+        const modelContainer = document.getElementById('model-container');
+        const placeholder = document.getElementById('placeholder');
 
-        async function start() {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: 1280, height: 720 } 
-            });
-            const video = document.createElement('video');
-            video.srcObject = stream;
-            video.play();
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
 
-            document.getElementById('ui').style.display = 'none';
-            init(video);
-        }
-
-        function init(video) {
-            const canvas = document.querySelector('#c');
-            renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+            const url = URL.createObjectURL(file);
             
-            // 1. MASTER AR SCENE (Where tracking happens)
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, 1280/720, 0.1, 100);
+            // Remove the placeholder box
+            if (placeholder) placeholder.remove();
+
+            // Create new GLTF entity
+            const newModel = document.createElement('a-entity');
+            newModel.setAttribute('gltf-model', url);
+            newModel.setAttribute('scale', '0.5 0.5 0.5'); // Adjust scale as needed
+            newModel.setAttribute('position', '0 0 0');
             
-            videoTexture = new THREE.VideoTexture(video);
-            scene.background = videoTexture;
+            // Clear previous models and add new one
+            modelContainer.innerHTML = '';
+            modelContainer.appendChild(newModel);
+        });
 
-            // Master Lighting & Model
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
-            const box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial({color: 0x00e5ff}));
-            box.position.set(0, 0, -1.5);
-            scene.add(box);
-            model = box;
-
-            // 2. OFF-SCREEN BUFFER (The "Mirror")
-            renderTarget = new THREE.WebGLRenderTarget(1280, 720);
-
-            // 3. FINAL SBS SCENE (The "Display")
-            finalScene = new THREE.Scene();
-            finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            
-            const material = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
-            // Left Eye Quad
-            const leftQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
-            leftQuad.position.set(-0.5, 0, 0);
-            finalScene.add(leftQuad);
-            // Right Eye Quad (Exact Copy)
-            const rightQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
-            rightQuad.position.set(0.5, 0, 0);
-            finalScene.add(rightQuad);
-
-            // File Importer
-            document.getElementById('file-input').addEventListener('change', (e) => {
-                const url = URL.createObjectURL(e.target.files[0]);
-                new THREE.GLTFLoader().load(url, (gltf) => {
-                    scene.remove(model);
-                    model = gltf.scene;
-                    model.position.set(0, 0, -1.5);
-                    scene.add(model);
-                });
-            });
-
-            // Gyro Tracking
-            window.addEventListener('deviceorientation', (e) => {
-                const alpha = THREE.MathUtils.degToRad(e.alpha);
-                const beta = THREE.MathUtils.degToRad(e.beta);
-                const gamma = THREE.MathUtils.degToRad(e.gamma);
-                scene.rotation.set(beta, alpha, -gamma, 'YXZ');
-            });
-
-            render();
-        }
-
-        function render() {
-            requestAnimationFrame(render);
-            
-            // Step A: Render the tracked AR scene to the mirror buffer
-            renderer.setRenderTarget(renderTarget);
-            renderer.render(scene, camera);
-            
-            // Step B: Render the mirror buffer twice to the screen
-            renderer.setRenderTarget(null);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.render(finalScene, finalCamera);
-        }
+        // Trigger Auto-Focus/Brightness: This is handled by the browser's 
+        // MediaStream implementation via AR.js automatically.
     </script>
 </body>
 </html>
+
