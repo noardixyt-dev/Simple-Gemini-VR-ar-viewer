@@ -2,38 +2,27 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Cardboard VR Passthrough</title>
+    <title>Dual-Eye Stereo Passthrough</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
-        
-        /* THE CARDBOARD MASK OVERLAY */
         #vr-mask {
             position: fixed; inset: 0; z-index: 100; pointer-events: none;
             display: flex; justify-content: space-around; align-items: center;
-            background: rgba(0,0,0,0);
         }
-        /* The Center Divider Line */
-        #vr-mask::after {
-            content: ""; position: absolute; left: 50%; top: 10%; bottom: 10%;
-            width: 2px; background: rgba(255,255,255,0.2); transform: translateX(-50%);
-        }
-        /* The Lens Circles */
         .lens {
-            width: 45vw; height: 45vw; border-radius: 50%;
-            box-shadow: 0 0 0 1000px black; /* This blacks out everything outside the circle */
+            width: 85vh; height: 85vh; border-radius: 50%;
+            box-shadow: 0 0 0 2000px black;
         }
-
         #ui { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: #111; color: #fff; flex-direction: column; }
-        button { padding: 20px 40px; font-weight: bold; background: #00e5ff; border: none; border-radius: 50px; cursor: pointer; }
+        button { padding: 25px 50px; font-weight: bold; background: #00e5ff; border: none; border-radius: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h1>CARDBOARD PASSTHROUGH</h1>
-        <button id="start">START CAMERA</button>
+        <button id="start">START DUAL-EYE VIEW</button>
     </div>
 
     <div id="vr-mask" style="display:none">
@@ -42,82 +31,87 @@
     </div>
 
     <script type="module">
-        let renderer, videoTexture, video;
-        let bgScene, bgCam, fgScene, camL, camR;
+        let renderer, videoTexture;
+        let sceneL, sceneR, camL, camR;
+        let hologramL, hologramR;
         let sensorRot = new THREE.Quaternion();
 
         async function init() {
-            // 1. RAW CAMERA (No Skybox)
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
             });
-            video = document.createElement('video');
+            const video = document.createElement('video');
             video.srcObject = stream;
             video.setAttribute('playsinline', '');
             await video.play();
             videoTexture = new THREE.VideoTexture(video);
 
-            // 2. RENDERER SETUP
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.autoClear = false; 
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.autoClear = false;
             document.body.appendChild(renderer.domElement);
 
-            // 3. THE "EYES" VIEW (Background Plane)
-            bgScene = new THREE.Scene();
-            bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            const background = new THREE.Mesh(
-                new THREE.PlaneGeometry(2, 2),
-                new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false })
-            );
-            bgScene.add(background);
+            // SETUP TWO IDENTICAL SCENES (One for each eye)
+            const setupEye = (isLeft) => {
+                const scene = new THREE.Scene();
+                const aspect = (window.innerWidth / 2) / window.innerHeight;
+                const cam = new THREE.PerspectiveCamera(70, aspect, 0.1, 1000);
+                
+                // 1. Add the Camera Feed as a background plane to EACH eye
+                const bgGeom = new THREE.PlaneGeometry(16, 9);
+                const bgMat = new THREE.MeshBasicMaterial({ map: videoTexture });
+                const bgMesh = new THREE.Mesh(bgGeom, bgMat);
+                bgMesh.position.z = -8; // Push back so it's the "wall"
+                scene.add(bgMesh);
 
-            // 4. THE "OBJECT" VIEW (Hologram)
-            fgScene = new THREE.Scene();
-            const aspect = (window.innerWidth / 2) / window.innerHeight;
-            camL = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
-            camR = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+                // 2. Add the Hologram to EACH eye
+                const holo = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.5, 0.5, 0.5), 
+                    new THREE.MeshNormalMaterial()
+                );
+                holo.position.set(0, 0, -3);
+                scene.add(holo);
 
-            // A test cube to see if tracking works
-            const box = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshNormalMaterial());
-            box.position.set(0, 0, -2);
-            fgScene.add(box);
+                return { scene, cam, holo };
+            };
 
-            // 5. GYRO SENSORS
+            const left = setupEye(true);
+            const right = setupEye(false);
+
+            sceneL = left.scene; camL = left.cam; hologramL = left.holo;
+            sceneR = right.scene; camR = right.cam; hologramR = right.holo;
+
             window.addEventListener('deviceorientation', (e) => {
-                const alpha = THREE.MathUtils.degToRad(e.alpha || 0);
-                const beta = THREE.MathUtils.degToRad(e.beta || 0);
-                const gamma = THREE.MathUtils.degToRad(e.gamma || 0);
+                if (!e.alpha) return;
+                const alpha = THREE.MathUtils.degToRad(e.alpha);
+                const beta = THREE.MathUtils.degToRad(e.beta);
+                const gamma = THREE.MathUtils.degToRad(e.gamma);
                 sensorRot.setFromEuler(new THREE.Euler(beta, alpha, -gamma, 'YXZ'));
             });
 
+            function animate() {
+                requestAnimationFrame(animate);
+
+                // Track the hologram for both eyes
+                hologramL.quaternion.copy(sensorRot).invert();
+                hologramR.quaternion.copy(sensorRot).invert();
+
+                const w = window.innerWidth, h = window.innerHeight;
+                renderer.setScissorTest(true);
+
+                // DRAW LEFT EYE (Full duplication)
+                renderer.setViewport(0, 0, w / 2, h);
+                renderer.setScissor(0, 0, w / 2, h);
+                renderer.clear();
+                renderer.render(sceneL, camL);
+
+                // DRAW RIGHT EYE (Full duplication)
+                renderer.setViewport(w / 2, 0, w / 2, h);
+                renderer.setScissor(w / 2, 0, w / 2, h);
+                renderer.render(sceneR, camR);
+            }
             animate();
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-
-            camL.quaternion.copy(sensorRot);
-            camR.quaternion.copy(sensorRot);
-            camL.position.set(-0.03, 0, 0); // Left eye offset
-            camR.position.set(0.03, 0, 0);  // Right eye offset
-
-            const w = window.innerWidth, h = window.innerHeight;
-            renderer.setScissorTest(true);
-
-            // Render Left Eye
-            renderer.setViewport(0, 0, w / 2, h);
-            renderer.setScissor(0, 0, w / 2, h);
-            renderer.clear();
-            renderer.render(bgScene, bgCam); // Draw camera feed
-            renderer.render(fgScene, camL); // Draw 3D object
-
-            // Render Right Eye
-            renderer.setViewport(w / 2, 0, w / 2, h);
-            renderer.setScissor(w / 2, 0, w / 2, h);
-            renderer.clearDepth();
-            renderer.render(bgScene, bgCam); // Draw camera feed
-            renderer.render(fgScene, camR); // Draw 3D object
         }
 
         document.getElementById('start').onclick = () => {
