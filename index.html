@@ -19,7 +19,7 @@
         #ui { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         .btn { background: #00e5ff; color: #000; padding: 20px 45px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; box-shadow: 0 0 25px rgba(0,229,255,0.5); }
         
-        /* Landscape Lockdown CSS */
+        /* 2. Landscape Lockdown CSS */
         #rotate-overlay { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
         @media (orientation: portrait) { #rotate-overlay { display: flex; } }
         .phone-icon { width: 50px; height: 90px; border: 3px solid #00e5ff; border-radius: 5px; animation: rot 2s infinite; margin-bottom: 20px; }
@@ -37,7 +37,7 @@
     
     <div id="ui">
         <h1>VIO STEREO SYSTEM</h1>
-        <p id="msg">Awaiting Permissions...</p>
+        <p id="msg">System Standby</p>
         <button class="btn" id="startBtn">START ENGINE</button>
     </div>
 
@@ -51,31 +51,46 @@
         const IPD = 0.064; 
 
         async function init() {
-            // 1. Fullscreen & Orientation Lock (Android/Chrome)
+            // Check if AlvaAR loaded properly
+            if (typeof AlvaAR === 'undefined') {
+                document.getElementById('msg').innerText = "Library error. Refresh page.";
+                return;
+            }
+
+            document.getElementById('msg').innerText = "Requesting Permissions...";
+
+            // A. Request Fullscreen & Orientation Lock
             try {
                 if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
                 if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
             } catch (e) { console.warn("Lock failed - using CSS fallback."); }
 
-            // 2. Camera Setup
-            video = document.createElement('video');
-            video.autoplay = video.muted = video.playsInline = true;
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } } 
-            });
-            video.srcObject = stream;
-            await video.play();
-
-            // 3. Tracking Setup (720p math buffer)
-            trackCanvas = document.createElement('canvas');
-            trackCanvas.width = 1280; trackCanvas.height = 720;
-            trackCtx = trackCanvas.getContext('2d');
-            alva = await AlvaAR.Initialize(1280, 720);
-
-            // 4. Sensor Permission (Inertial Odometry)
-            if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                await DeviceOrientationEvent.requestPermission();
+            // B. Request Camera
+            try {
+                video = document.createElement('video');
+                video.autoplay = video.muted = video.playsInline = true;
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+                });
+                video.srcObject = stream;
+                await video.play();
+            } catch (e) {
+                document.getElementById('msg').innerText = "Camera Access Denied.";
+                return;
             }
+
+            // C. Request Motion Sensors (Crucial for iOS)
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const status = await DeviceOrientationEvent.requestPermission();
+                    if (status !== 'granted') {
+                        document.getElementById('msg').innerText = "Sensor Permission Denied.";
+                        return;
+                    }
+                } catch (e) { console.error(e); }
+            }
+
+            // D. Set up Sensor Fusion tracking
             window.addEventListener('deviceorientation', (e) => {
                 const alpha = THREE.MathUtils.degToRad(e.alpha);
                 const beta = THREE.MathUtils.degToRad(e.beta);
@@ -85,6 +100,12 @@
                 deviceRot.setFromEuler(euler);
                 deviceRot.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient));
             });
+
+            // E. Initialize AR Math
+            trackCanvas = document.createElement('canvas');
+            trackCanvas.width = 1280; trackCanvas.height = 720;
+            trackCtx = trackCanvas.getContext('2d');
+            alva = await AlvaAR.Initialize(1280, 720);
 
             setupThree();
             document.getElementById('ui').style.display = 'none';
@@ -97,14 +118,13 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.autoClear = false;
 
-            // Stereo Background Setup
+            // Stereo Background Setup (renders world once for each eye)
             bgScene = new THREE.Scene();
             bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
             videoTexture = new THREE.VideoTexture(video);
             const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false }));
             bgScene.add(bgMesh);
 
-            // 3D Model Scene Setup
             scene = new THREE.Scene();
             const aspect = (window.innerWidth / 2) / window.innerHeight;
             cameraL = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
@@ -147,3 +167,4 @@
     </script>
 </body>
 </html>
+
