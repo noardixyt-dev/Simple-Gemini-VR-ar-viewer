@@ -1,133 +1,71 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Nitro Stereo AR</title>
-    <script src="https://cdn.jsdelivr.net/npm/alva-ar@0.2.0/dist/alva_ar.min.js"></script>
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
+    <meta charset="utf-8">
+    <title>Pro VIO Stereo AR</title>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; color: #00e5ff; }
-        #three-canvas { position: absolute; inset: 0; z-index: 10; }
-        #ui { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-        
-        /* 2. ROTATE ANIMATION SHIELD */
-        #rotate-overlay { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; }
-        @media (orientation: portrait) { #rotate-overlay { display: flex; } }
-        .phone-icon { width: 50px; height: 90px; border: 3px solid #00e5ff; border-radius: 5px; animation: rotIcon 2s infinite ease-in-out; margin-bottom: 20px; }
-        @keyframes rotIcon { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
-
-        /* 3. LOADING BAR */
-        #loader-wrap { width: 200px; }
-        .bar-bg { width: 100%; height: 6px; background: #1a1a1a; border-radius: 10px; overflow: hidden; margin: 15px 0; }
-        #bar-fill { width: 0%; height: 100%; background: #00e5ff; transition: width 0.2s; }
-        .btn { background: #00e5ff; color: #000; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; display: none; box-shadow: 0 0 20px #00e5ff; }
+        body { margin: 0; background: #000; color: #00e5ff; font-family: sans-serif; }
+        #gui { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); }
+        .btn { background: #00e5ff; color: #000; border: none; padding: 20px 40px; font-size: 1.2rem; font-weight: bold; border-radius: 50px; cursor: pointer; margin: 10px; }
+        #file-label { border: 2px dashed #00e5ff; padding: 20px; border-radius: 10px; margin: 20px; cursor: pointer; }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
-    <div id="rotate-overlay">
-        <div class="phone-icon"></div>
-        <h2>ROTATE DEVICE</h2>
-        <p>Landscape mode required</p>
+
+    <div id="gui">
+        <h1>6DoF STEREO AR</h1>
+        
+        <label id="file-label" for="file-upload">
+            <span>📁 UPLOAD .GLB MODEL</span>
+            <input type="file" id="file-upload" accept=".glb,.gltf">
+        </label>
+        <p id="status">Ready to initialize...</p>
+
+        <button class="btn" onclick="enterAR()">START IMMERSIVE AR</button>
     </div>
 
-    <canvas id="three-canvas"></canvas>
-    
-    <div id="ui">
-        <h1>VIO STEREO</h1>
-        <div id="loader-wrap">
-            <p id="msg">CONNECTING TO TRACKER...</p>
-            <div class="bar-bg"><div id="bar-fill"></div></div>
-        </div>
-        <button class="btn" id="startBtn">START ENGINE</button>
-    </div>
+    <a-scene webxr="optionalFeatures: hit-test, local-floor; referenceSpaceType: local-floor">
+        <a-assets id="assets"></a-assets>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        <a-entity id="model-container" position="0 0 -2" scale="1 1 1" visible="false"></a-entity>
 
-        // --- USER SETTINGS: IMPORT YOUR 3D OBJECT HERE ---
-        const MY_OBJECT_URL = 'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf';
+        <a-camera position="0 1.6 0"></a-camera>
+        <a-light type="ambient" intensity="1"></a-light>
+        <a-light type="directional" position="1 2 1"></a-light>
+    </a-scene>
 
-        let alva, scene, bgScene, renderer, video, cameraL, cameraR, bgCamera;
-        let trackCanvas, trackCtx, videoTexture;
-        let deviceRot = new THREE.Quaternion();
-        const IPD = 0.064;
+    <script>
+        const fileInput = document.getElementById('file-upload');
+        const modelContainer = document.getElementById('model-container');
+        const statusText = document.getElementById('status');
 
-        // 4. THE LOADER LOGIC
-        let checkCount = 0;
-        const loader = setInterval(() => {
-            checkCount += 5;
-            if (checkCount < 95) document.getElementById('bar-fill').style.width = checkCount + "%";
-
-            if (window.AlvaAR) {
-                clearInterval(loader);
-                document.getElementById('bar-fill').style.width = "100%";
-                document.getElementById('msg').innerText = "SYSTEMS ONLINE";
-                document.getElementById('startBtn').style.display = "block";
-            } else if (checkCount > 200) {
-                document.getElementById('msg').innerText = "CDN TIMEOUT. REFRESH PAGE.";
+        // Handle File Import
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                modelContainer.setAttribute('gltf-model', `url(${url})`);
+                modelContainer.setAttribute('visible', 'true');
+                statusText.innerText = "Model Loaded: " + file.name;
             }
-        }, 100);
+        });
 
-        async function start() {
-            document.getElementById('msg').innerText = "AWAITING PERMISSIONS...";
-            try {
-                // 5. PERMISSION PROTOCOL
-                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const res = await DeviceOrientationEvent.requestPermission();
-                    if (res !== 'granted') throw new Error("Motion Blocked");
-                }
+        function enterAR() {
+            const scene = document.querySelector('a-scene');
+            
+            // This is the "Magic" command. 
+            // It tells the phone to start tracking the floor and world.
+            scene.enterVR(); 
 
-                // 6. CAMERA INIT
-                video = document.createElement('video');
-                video.autoplay = video.muted = video.playsInline = true;
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment', width: 1280, height: 720 } 
-                });
-                video.srcObject = stream;
-                await video.play();
+            // Hide the UI
+            document.getElementById('gui').style.display = 'none';
 
-                // 7. TRACKING INIT
-                trackCanvas = document.createElement('canvas');
-                trackCanvas.width = 1280; trackCanvas.height = 720;
-                trackCtx = trackCanvas.getContext('2d');
-                alva = await AlvaAR.Initialize(1280, 720);
-
-                // Setup Gyro
-                window.addEventListener('deviceorientation', (e) => {
-                    const alpha = THREE.MathUtils.degToRad(e.alpha);
-                    const beta = THREE.MathUtils.degToRad(e.beta);
-                    const gamma = THREE.MathUtils.degToRad(e.gamma);
-                    const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
-                    const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-                    deviceRot.setFromEuler(euler);
-                    deviceRot.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient));
-                });
-
-                initThree();
-                document.getElementById('ui').style.display = 'none';
-                animate();
-            } catch (e) {
-                alert("ERROR: " + e.message + "\nEnsure you are using HTTPS.");
-            }
+            // IMPORTANT: To see the camera feed, we must make the background transparent
+            // WebXR AR mode handles the camera passthrough automatically.
+            scene.setAttribute('background', 'transparent: true');
         }
-
-        function initThree() {
-            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('three-canvas'), antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.autoClear = false;
-
-            // Background Stereo (Pass-through)
-            bgScene = new THREE.Scene();
-            bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            videoTexture = new THREE.VideoTexture(video);
-            bgScene.add(
-                2
+    </script>
+</body>
+</html>
