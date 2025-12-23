@@ -5,18 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
         body, html { 
-            margin: 0; padding: 0; width: 100vw; height: 100vh; 
+            width: 100vw; height: 100vh; 
             background: #000; overflow: hidden; 
             display: flex; justify-content: center; align-items: center;
         }
         .master {
             display: flex;
-            gap: 10px;
-            transform: translateX(-10px);
+            gap: 10px; /* 10px GAP */
+            transform: translateX(-10px); /* 10px LEFT SHIFT */
         }
         .view {
-            width: 450px; 
-            height: 253.2px;
+            width: 55mm; /* PHYSICAL 55MM WIDTH */
+            height: 30.95mm; /* EXACT 16:9 RATIO */
+            background: #000;
         }
         video { width: 100%; height: 100%; object-fit: fill; display: block; }
     </style>
@@ -28,10 +29,14 @@
     </div>
     <script>
         async function start() {
-            const s = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment", width: {ideal: 4096}}});
-            document.getElementById('v1').srcObject = s;
-            document.getElementById('v2').srcObject = s;
-            document.onclick = () => document.documentElement.requestFullscreen();
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: { ideal: 4096 } }
+                });
+                document.getElementById('v1').srcObject = s;
+                document.getElementById('v2').srcObject = s;
+                document.onclick = () => document.documentElement.requestFullscreen();
+            } catch (e) {}
         }
         start();
     </script>
