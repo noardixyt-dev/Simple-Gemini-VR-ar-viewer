@@ -3,16 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SBS Scale Fix</title>
+    <title>16:9 SBS 55mm</title>
     <style>
-        :root {
-            /* 1. INCREASE THIS TO MAKE THE WINDOWS LARGER */
-            --scale-factor: 1.2; 
-            
-            /* 2. ADJUST THIS TO MOVE THEM CLOSER (Negative) OR FURTHER (Positive) */
-            --gap: -2%; 
-        }
-
         body, html { 
             margin: 0; padding: 0; width: 100vw; height: 100vh; 
             background: #000 !important; overflow: hidden; 
@@ -20,38 +12,32 @@
         }
 
         #fs-btn {
-            position: fixed; top: 10px; left: 10px; z-index: 999;
-            padding: 15px; background: rgba(255, 255, 255, 0.1);
-            color: white; border: 1px solid white; border-radius: 5px;
+            position: fixed; top: 15px; left: 15px; z-index: 1000;
+            padding: 12px 18px; background: rgba(255, 255, 255, 0.1);
+            color: white; border: 1px solid white; border-radius: 4px;
+            cursor: pointer; font-weight: bold;
         }
 
         .eye-container {
             display: flex;
-            width: 100%;
             justify-content: center;
             align-items: center;
-            gap: var(--gap); /* Controls how close they are */
+            /* No gap - windows touch at the center */
+            gap: 0; 
         }
 
-        .eye {
-            /* Width 55mm scaled by factor, Height calculated for 1.5:1 */
-            width: calc(55mm * var(--scale-factor));
-            height: calc(36.6mm * var(--scale-factor));
-            background: #000;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
+        /* 55mm Width | 16:9 Ratio -> 30.94mm Height */
         video {
-            width: 100%;
-            height: 100%;
-            object-fit: fill; /* No cropping, see everything */
-            border: none !important;
+            width: 55mm;
+            height: 30.94mm;
+            background: #000;
+            object-fit: fill; /* Ensures full 16:9 frame is visible */
+            display: block;
+            border: none;
+            outline: none;
         }
 
-        :fullscreen #fs-btn { opacity: 0.1; }
+        :fullscreen #fs-btn { opacity: 0.2; }
     </style>
 </head>
 <body>
@@ -59,8 +45,8 @@
     <button id="fs-btn" onclick="toggleFS()">FULLSCREEN</button>
 
     <div class="eye-container">
-        <div class="eye"><video id="v1" autoplay playsinline muted></video></div>
-        <div class="eye"><video id="v2" autoplay playsinline muted></video></div>
+        <video id="v1" autoplay playsinline muted></video>
+        <video id="v2" autoplay playsinline muted></video>
     </div>
 
     <script>
