@@ -1,42 +1,55 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Hologram Matchmove AR</title>
+    <title>Cardboard VR Passthrough</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #ui { position: fixed; top: 10px; left: 10px; z-index: 1000; display: flex; gap: 10px; }
-        #start-overlay { position: fixed; inset: 0; background: #000; color: #fff; display: flex; align-items: center; justify-content: center; z-index: 2000; flex-direction: column; }
-        button { background: #00e5ff; border: none; padding: 15px 25px; border-radius: 10px; font-weight: bold; cursor: pointer; }
-        #crosshair { position: fixed; top: 50%; left: 50%; width: 30px; height: 30px; border: 2px solid white; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; opacity: 0.5; }
+        body { margin: 0; overflow: hidden; background: #000; }
+        
+        /* THE CARDBOARD MASK OVERLAY */
+        #vr-mask {
+            position: fixed; inset: 0; z-index: 100; pointer-events: none;
+            display: flex; justify-content: space-around; align-items: center;
+            background: rgba(0,0,0,0);
+        }
+        /* The Center Divider Line */
+        #vr-mask::after {
+            content: ""; position: absolute; left: 50%; top: 10%; bottom: 10%;
+            width: 2px; background: rgba(255,255,255,0.2); transform: translateX(-50%);
+        }
+        /* The Lens Circles */
+        .lens {
+            width: 45vw; height: 45vw; border-radius: 50%;
+            box-shadow: 0 0 0 1000px black; /* This blacks out everything outside the circle */
+        }
+
+        #ui { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: #111; color: #fff; flex-direction: column; }
+        button { padding: 20px 40px; font-weight: bold; background: #00e5ff; border: none; border-radius: 50px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div id="start-overlay">
-        <h1>STEREO PASSTHROUGH</h1>
-        <button id="start-btn">START CAMERA & SENSORS</button>
-    </div>
 
     <div id="ui">
-        <button id="import-btn">IMPORT MODEL (.GLB)</button>
-        <input type="file" id="file-input" accept=".glb" style="display:none">
+        <h1>CARDBOARD PASSTHROUGH</h1>
+        <button id="start">START CAMERA</button>
     </div>
 
-    <div id="crosshair"></div>
+    <div id="vr-mask" style="display:none">
+        <div class="lens"></div>
+        <div class="lens"></div>
+    </div>
 
     <script type="module">
         let renderer, videoTexture, video;
-        let bgScene, bgCam; // The "Room"
-        let fgScene, camLeft, camRight; // The "Hologram"
-        let modelContainer;
-        let sensorOrientation = new THREE.Quaternion();
+        let bgScene, bgCam, fgScene, camL, camR;
+        let sensorRot = new THREE.Quaternion();
 
         async function init() {
-            // 1. Setup Video (The Passthrough)
+            // 1. RAW CAMERA (No Skybox)
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
             });
             video = document.createElement('video');
             video.srcObject = stream;
@@ -44,64 +57,39 @@
             await video.play();
             videoTexture = new THREE.VideoTexture(video);
 
-            // 2. Setup Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            // 2. RENDERER SETUP
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.autoClear = false;
+            renderer.autoClear = false; 
             document.body.appendChild(renderer.domElement);
 
-            // 3. Setup Background (Room Plane)
+            // 3. THE "EYES" VIEW (Background Plane)
             bgScene = new THREE.Scene();
             bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            const bgMesh = new THREE.Mesh(
+            const background = new THREE.Mesh(
                 new THREE.PlaneGeometry(2, 2),
-                new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false, depthWrite: false })
+                new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false })
             );
-            bgScene.add(bgMesh);
+            bgScene.add(background);
 
-            // 4. Setup Foreground (3D World)
+            // 4. THE "OBJECT" VIEW (Hologram)
             fgScene = new THREE.Scene();
             const aspect = (window.innerWidth / 2) / window.innerHeight;
-            camLeft = new THREE.PerspectiveCamera(70, aspect, 0.01, 1000);
-            camRight = new THREE.PerspectiveCamera(70, aspect, 0.01, 1000);
+            camL = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            camR = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
 
-            modelContainer = new THREE.Group();
-            fgScene.add(modelContainer);
+            // A test cube to see if tracking works
+            const box = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshNormalMaterial());
+            box.position.set(0, 0, -2);
+            fgScene.add(box);
 
-            // Add Lighting for your model
-            fgScene.add(new THREE.AmbientLight(0xffffff, 1));
-            const light = new THREE.DirectionalLight(0xffffff, 1);
-            light.position.set(5, 10, 7);
-            fgScene.add(light);
-
-            // Initial Placeholder
-            const cube = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshNormalMaterial({wireframe: true}));
-            cube.position.set(0, 0, -2);
-            modelContainer.add(cube);
-
-            // 5. Sensor Logic
+            // 5. GYRO SENSORS
             window.addEventListener('deviceorientation', (e) => {
-                if (e.alpha === null) return;
-                const alpha = THREE.MathUtils.degToRad(e.alpha);
-                const beta = THREE.MathUtils.degToRad(e.beta);
-                const gamma = THREE.MathUtils.degToRad(e.gamma);
-                const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-                sensorOrientation.setFromEuler(euler);
+                const alpha = THREE.MathUtils.degToRad(e.alpha || 0);
+                const beta = THREE.MathUtils.degToRad(e.beta || 0);
+                const gamma = THREE.MathUtils.degToRad(e.gamma || 0);
+                sensorRot.setFromEuler(new THREE.Euler(beta, alpha, -gamma, 'YXZ'));
             });
-
-            // 6. Model Importer
-            const fileInput = document.getElementById('file-input');
-            document.getElementById('import-btn').onclick = () => fileInput.click();
-            fileInput.onchange = (e) => {
-                const file = e.target.files[0];
-                const url = URL.createObjectURL(file);
-                new THREE.GLTFLoader().load(url, (gltf) => {
-                    modelContainer.clear(); // Remove placeholder
-                    const model = gltf.scene;
-                    model.position.set(0, 0, -2); // Place in front of camera
-                    modelContainer.add(model);
-                });
-            };
 
             animate();
         }
@@ -109,37 +97,35 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // Update Perspective Cameras
-            camLeft.quaternion.copy(sensorOrientation);
-            camRight.quaternion.copy(sensorOrientation);
-            
-            // Stereo Offset
-            camLeft.position.set(-0.03, 0, 0);
-            camRight.position.set(0.03, 0, 0);
+            camL.quaternion.copy(sensorRot);
+            camR.quaternion.copy(sensorRot);
+            camL.position.set(-0.03, 0, 0); // Left eye offset
+            camR.position.set(0.03, 0, 0);  // Right eye offset
 
             const w = window.innerWidth, h = window.innerHeight;
             renderer.setScissorTest(true);
 
-            // LEFT EYE
-            renderer.setViewport(0, 0, w/2, h);
-            renderer.setScissor(0, 0, w/2, h);
+            // Render Left Eye
+            renderer.setViewport(0, 0, w / 2, h);
+            renderer.setScissor(0, 0, w / 2, h);
             renderer.clear();
-            renderer.render(bgScene, bgCam); // The Real Room
-            renderer.render(fgScene, camLeft); // The Hologram
+            renderer.render(bgScene, bgCam); // Draw camera feed
+            renderer.render(fgScene, camL); // Draw 3D object
 
-            // RIGHT EYE
-            renderer.setViewport(w/2, 0, w/2, h);
-            renderer.setScissor(w/2, 0, w/2, h);
-            renderer.clearDepth(); // Keep the room, just clear 3D depth
-            renderer.render(bgScene, bgCam); // The Real Room
-            renderer.render(fgScene, camRight); // The Hologram
+            // Render Right Eye
+            renderer.setViewport(w / 2, 0, w / 2, h);
+            renderer.setScissor(w / 2, 0, w / 2, h);
+            renderer.clearDepth();
+            renderer.render(bgScene, bgCam); // Draw camera feed
+            renderer.render(fgScene, camR); // Draw 3D object
         }
 
-        document.getElementById('start-btn').onclick = () => {
+        document.getElementById('start').onclick = () => {
+            document.getElementById('ui').style.display = 'none';
+            document.getElementById('vr-mask').style.display = 'flex';
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                 DeviceOrientationEvent.requestPermission().then(init);
             } else { init(); }
-            document.getElementById('start-overlay').style.display = 'none';
         };
     </script>
 </body>
