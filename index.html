@@ -2,99 +2,114 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Stereo 6DoF Fixed</title>
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <title>Mirror Stereo AR</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #ui { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; color: #00e5ff; }
+        #ui { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; color: #00e5ff; }
         .btn { background: #00e5ff; color: #000; border: none; padding: 20px 50px; border-radius: 50px; font-weight: bold; cursor: pointer; margin-top: 20px; }
-        #file-input { display: none; }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h2>STEREO 6DoF SYSTEM</h2>
+        <h1>Ar Vr Viewer</h1>
         <label style="border: 2px dashed #00e5ff; padding: 20px; border-radius: 10px; cursor: pointer;">
-            <span>📁 LOAD MODEL (.GLB)</span>
+            <span>📁 IMPORT .GLB MODEL</span>
             <input type="file" id="file-input" accept=".glb,.gltf">
         </label>
-        <button class="btn" onclick="startEngine()">ENGAGE STEREO AR</button>
+        <button class="btn" onclick="start()">START DUAL-VIEW</button>
     </div>
 
-    <a-scene embedded vr-mode-ui="enabled: false">
-        <a-assets></a-assets>
-
-        <a-entity id="ar-model" visible="false" scale="0.5 0.5 0.5"></a-entity>
-
-        <a-light type="ambient" intensity="1.5"></a-light>
-        <a-light type="directional" position="1 2 1"></a-light>
-
-        <a-entity id="rig" position="0 1.6 0">
-            <a-camera id="cam" look-controls="pointerLockEnabled: true"></a-camera>
-        </a-entity>
-    </a-scene>
+    <canvas id="c"></canvas>
 
     <script>
-        const modelEl = document.querySelector('#ar-model');
-        const fileInput = document.querySelector('#file-input');
+        let renderer, scene, camera, videoTexture, model, renderTarget;
+        let finalScene, finalCamera;
 
-        fileInput.addEventListener('change', (e) => {
-            const url = URL.createObjectURL(e.target.files[0]);
-            modelEl.setAttribute('gltf-model', `url(${url})`);
-            modelEl.setAttribute('visible', 'true');
-        });
+        async function start() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', width: 1280, height: 720 } 
+            });
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.play();
 
-        async function startEngine() {
-            // 1. Permission (iOS/Android)
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                await DeviceOrientationEvent.requestPermission();
-            }
+            document.getElementById('ui').style.display = 'none';
+            init(video);
+        }
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720} } 
+        function init(video) {
+            const canvas = document.querySelector('#c');
+            renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+            
+            // 1. MASTER AR SCENE (Where tracking happens)
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, 1280/720, 0.1, 100);
+            
+            videoTexture = new THREE.VideoTexture(video);
+            scene.background = videoTexture;
+
+            // Master Lighting & Model
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            const box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial({color: 0x00e5ff}));
+            box.position.set(0, 0, -1.5);
+            scene.add(box);
+            model = box;
+
+            // 2. OFF-SCREEN BUFFER (The "Mirror")
+            renderTarget = new THREE.WebGLRenderTarget(1280, 720);
+
+            // 3. FINAL SBS SCENE (The "Display")
+            finalScene = new THREE.Scene();
+            finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            
+            const material = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
+            // Left Eye Quad
+            const leftQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
+            leftQuad.position.set(-0.5, 0, 0);
+            finalScene.add(leftQuad);
+            // Right Eye Quad (Exact Copy)
+            const rightQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
+            rightQuad.position.set(0.5, 0, 0);
+            finalScene.add(rightQuad);
+
+            // File Importer
+            document.getElementById('file-input').addEventListener('change', (e) => {
+                const url = URL.createObjectURL(e.target.files[0]);
+                new THREE.GLTFLoader().load(url, (gltf) => {
+                    scene.remove(model);
+                    model = gltf.scene;
+                    model.position.set(0, 0, -1.5);
+                    scene.add(model);
                 });
+            });
 
-                const video = document.createElement('video');
-                video.srcObject = stream;
-                video.play();
+            // Gyro Tracking
+            window.addEventListener('deviceorientation', (e) => {
+                const alpha = THREE.MathUtils.degToRad(e.alpha);
+                const beta = THREE.MathUtils.degToRad(e.beta);
+                const gamma = THREE.MathUtils.degToRad(e.gamma);
+                scene.rotation.set(beta, alpha, -gamma, 'YXZ');
+            });
 
-                const scene = document.querySelector('a-scene');
-                const texture = new THREE.VideoTexture(video);
-                
-                // ASPECT RATIO FIX: 
-                // We force the texture to "Cover" the background instead of "Fit"
-                // This prevents the stretching you were seeing.
-                texture.matrixAutoUpdate = false;
-                const aspect = 1280 / 720;
-                const screenAspect = (window.innerWidth / 2) / window.innerHeight;
-                if (aspect > screenAspect) {
-                    texture.matrix.setUvTransform(0, 0, screenAspect / aspect, 1, 0, 0.5, 0.5);
-                } else {
-                    texture.matrix.setUvTransform(0, 0, 1, aspect / screenAspect, 0, 0.5, 0.5);
-                }
+            render();
+        }
 
-                scene.object3D.background = texture;
-
-                // 2. Hide UI and Enter Side-by-Side Mode
-                document.getElementById('ui').style.display = 'none';
-                
-                // Force 6DoF: A-Frame's enterVR handles the SBS split and Gyro
-                scene.enterVR();
-
-                // If no model was uploaded, show a placeholder box so you can see tracking works
-                if (!modelEl.getAttribute('gltf-model')) {
-                    modelEl.setAttribute('geometry', 'primitive: box');
-                    modelEl.setAttribute('material', 'color: red');
-                    modelEl.setAttribute('visible', 'true');
-                }
-
-            } catch (err) {
-                alert("Please use HTTPS. Error: " + err.message);
-            }
+        function render() {
+            requestAnimationFrame(render);
+            
+            // Step A: Render the tracked AR scene to the mirror buffer
+            renderer.setRenderTarget(renderTarget);
+            renderer.render(scene, camera);
+            
+            // Step B: Render the mirror buffer twice to the screen
+            renderer.setRenderTarget(null);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.render(finalScene, finalCamera);
         }
     </script>
 </body>
 </html>
-
