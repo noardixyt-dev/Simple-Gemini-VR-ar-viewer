@@ -2,104 +2,138 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Noardix Dual-Eye AR</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+    <title>Noardix Pro AR-VR Cloner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        #ui { position: fixed; top: 10px; left: 10px; z-index: 100; display: flex; gap: 5px; }
-        button { background: #00e5ff; border: none; padding: 10px; border-radius: 5px; font-weight: bold; }
-        /* The Cardboard Lens Mask */
+        body { margin: 0; overflow: hidden; background: #000; }
+        #ui { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; color: #00e5ff; font-family: sans-serif; }
+        button { background: #00e5ff; border: none; padding: 12px 24px; border-radius: 20px; font-weight: bold; margin: 5px; cursor: pointer; }
         #lens-mask {
-            position: fixed; inset: 0; pointer-events: none; z-index: 50;
+            position: fixed; inset: 0; pointer-events: none; z-index: 500;
             background: radial-gradient(circle at 25% 50%, transparent 35%, black 65%),
                         radial-gradient(circle at 75% 50%, transparent 35%, black 65%);
         }
     </style>
 </head>
 <body>
-
     <div id="ui">
-        <button onclick="document.getElementById('file-input').click()">📁 IMPORT GLB</button>
+        <strong>STEP 1:</strong> <button id="start-btn">ACTIVATE ARCORE</button>
+        <strong>STEP 2:</strong> <button onclick="document.getElementById('file-input').click()">IMPORT MODEL</button>
         <input type="file" id="file-input" accept=".glb" style="display:none">
-        <span style="color:white; font-size: 12px; margin-left: 10px;">Place phone in Cardboard</span>
+        <p style="font-size: 11px;">Find floor -> Tap screen -> Slide into Cardboard</p>
     </div>
-
     <div id="lens-mask"></div>
-    <canvas id="c"></canvas>
 
-    <script>
-        let renderer, scene, camera, model, videoTexture, renderTarget;
-        let finalScene, finalCamera;
+    <script type="module">
+        let renderer, scene, camera, model, reticle, renderTarget, finalScene, finalCamera;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
 
         async function init() {
-            const canvas = document.querySelector('#c');
-            renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+            // Setup WebGL Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true; // This lets us use the phone's AR engine
+            document.body.appendChild(renderer.domElement);
 
-            // 1. THE AR SCENE (The "Brain")
+            // 1. THE ARCORE SCENE (The tracking happens here)
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
-            
-            // Get Real World Camera
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: 1280, height: 720 } 
-            });
-            const video = document.createElement('video');
-            video.srcObject = stream;
-            video.play();
-            videoTexture = new THREE.VideoTexture(video);
-            scene.background = videoTexture;
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+            // Finding the floor ring (Reticle)
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0x00e5ff })
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
 
-            // 2. THE CLONING BUFFER (The "Mirror")
+            // 2. THE DUAL-EYE RENDERER (The Cloner)
             renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
-
-            // 3. THE DISPLAY SCENE (The "Eyes")
             finalScene = new THREE.Scene();
             finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            
+            // This material is the "Mirror" of the finished AR scene
             const material = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
             
             const leftEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
-            leftEye.position.set(-0.5, 0, 0);
+            leftEye.position.set(-0.5, 0, 0); // Left half of screen
             finalScene.add(leftEye);
 
             const rightEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
-            rightEye.position.set(0.5, 0, 0);
+            rightEye.position.set(0.5, 0, 0); // Right half of screen
             finalScene.add(rightEye);
 
-            // Import GLB Logic
+            // Activate AR Session
+            document.getElementById('start-btn').addEventListener('click', async () => {
+                const session = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['hit-test'],
+                    optionalFeatures: ['dom-overlay'],
+                    domOverlay: { root: document.getElementById('ui') }
+                });
+                renderer.xr.setSession(session);
+            });
+
+            // Model Import
             document.getElementById('file-input').addEventListener('change', (e) => {
                 const url = URL.createObjectURL(e.target.files[0]);
                 new THREE.GLTFLoader().load(url, (gltf) => {
                     if (model) scene.remove(model);
                     model = gltf.scene;
-                    model.position.set(0, -1.6, -3); // Placed on "floor"
+                    model.visible = false;
                     scene.add(model);
                 });
             });
 
-            // Gyroscope tracking (The "World Lock")
-            window.addEventListener('deviceorientation', (e) => {
-                const alpha = THREE.MathUtils.degToRad(e.alpha);
-                const beta = THREE.MathUtils.degToRad(e.beta);
-                const gamma = THREE.MathUtils.degToRad(e.gamma);
-                camera.rotation.set(beta, alpha, -gamma, 'YXZ');
-            });
-
-            animate();
+            renderer.setAnimationLoop(render);
         }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            // Draw the AR tracking once to the buffer
+        function render(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = renderer.xr.getSession();
+
+                if (!hitTestSourceRequested) {
+                    session.requestReferenceSpace('viewer').then((refSpace) => {
+                        session.requestHitTestSource({ space: refSpace }).then((source) => {
+                            hitTestSource = source;
+                        });
+                    });
+                    hitTestSourceRequested = true;
+                }
+
+                if (hitTestSource) {
+                    const hitResults = frame.getHitTestResults(hitTestSource);
+                    if (hitResults.length) {
+                        const hit = hitResults[0];
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                    } else {
+                        reticle.visible = false;
+                    }
+                }
+            }
+
+            // --- THE TRICK ---
+            // 1. Draw the "Perfectly Tracked" AR scene into the hidden buffer
             renderer.setRenderTarget(renderTarget);
             renderer.render(scene, camera);
-            // Show that buffer in both eyes
+            
+            // 2. Clear the buffer and draw the buffer twice on the screen
             renderer.setRenderTarget(null);
             renderer.render(finalScene, finalCamera);
         }
+
+        window.addEventListener('click', () => {
+            if (reticle.visible && model) {
+                model.position.setFromMatrixPosition(reticle.matrix);
+                model.visible = true;
+            }
+        });
 
         init();
     </script>
