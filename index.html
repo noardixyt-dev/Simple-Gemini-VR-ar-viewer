@@ -2,102 +2,195 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Noardix Dual-Eye SLAM</title>
+    <title>Noardix Stereo AR - Import Model</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR/dist/alva_ar.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #ui { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1000; background: #000; }
-        button { background: #00e5ff; border: none; padding: 25px 50px; border-radius: 50px; font-size: 20px; font-weight: bold; cursor: pointer; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; background: rgba(0,0,0,0.9); }
+        button { background: #00e5ff; border: none; padding: 15px 30px; border-radius: 50px; font-size: 18px; font-weight: bold; cursor: pointer; color: black; margin: 10px; box-shadow: 0 0 15px #00e5ff; width: 250px; }
+        #status { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); color: #00e5ff; z-index: 500; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px black; pointer-events: none; }
+        /* Hidden file input */
+        #file-input { display: none; }
     </style>
 </head>
 <body>
-    <div id="ui"><button id="start-btn">START DUAL-EYE AR</button></div>
+    <div id="status">WAITING FOR START...</div>
+    
+    <div id="ui">
+        <h1 style="color:white; margin-bottom: 20px;">STEREO AR IMPORTER</h1>
+        <button id="start-btn">1. START CAMERA</button>
+        <button onclick="document.getElementById('file-input').click()">2. IMPORT .GLB MODEL</button>
+        <input type="file" id="file-input" accept=".glb,.gltf">
+        <p style="color:#aaa; font-size: 12px; margin-top: 20px;">Once started, tap screen to place model.</p>
+    </div>
 
     <script type="module">
-        let renderer, scene, camLeft, camRight, alva, video, videoTexture, model;
+        let renderer, alva, video, videoTexture;
+        let scene, camLeft, camRight, bgScene, bgCam;
+        let objectContainer; 
 
         async function init() {
-            // 1. GET RAW CAMERA (Fixes the "No Output" issue)
+            document.getElementById('status').innerText = "INITIALIZING...";
+
+            // 1. SETUP RAW CAMERA (Muted/Playsinline critical for mobile)
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: 1280, height: 720 } 
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
             });
+            
             video = document.createElement('video');
+            video.setAttribute('autoplay', '');
+            video.setAttribute('muted', '');
+            video.setAttribute('playsinline', '');
             video.srcObject = stream;
-            video.play();
+            await video.play();
+            
             videoTexture = new THREE.VideoTexture(video);
 
-            // 2. SETUP SLAM TRACKING
+            // 2. SETUP SLAM ENGINE
             alva = await AlvaAR.Initialize(1280, 720);
 
-            // 3. SETUP THREE.JS
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            // 3. SETUP THREE.JS RENDERER
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.autoClear = false;
             document.body.appendChild(renderer.domElement);
 
+            // 4. BACKGROUND SCENE (The Video Feed)
+            bgScene = new THREE.Scene();
+            bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            const bgMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(2, 2), 
+                new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false, depthWrite: false })
+            );
+            bgScene.add(bgMesh);
+
+            // 5. FOREGROUND SCENE (The 3D World)
             scene = new THREE.Scene();
-            
-            // Stereo Setup (One camera per eye)
             const aspect = (window.innerWidth / 2) / window.innerHeight;
             camLeft = new THREE.PerspectiveCamera(70, aspect, 0.1, 1000);
             camRight = new THREE.PerspectiveCamera(70, aspect, 0.1, 1000);
             
-            // 4. THE PASSTHROUGH BACKGROUND (Rendered for both eyes)
-            // We use a large plane that stays centered behind our view
-            const bgGeo = new THREE.PlaneGeometry(16, 9);
-            const bgMat = new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false });
-            const bgMesh = new THREE.Mesh(bgGeo, bgMat);
-            bgMesh.position.z = -10; 
-            scene.add(bgMesh);
+            // Container for the object so we can move it easily
+            objectContainer = new THREE.Group();
+            scene.add(objectContainer);
 
-            // 5. THE 3D MODEL (Floating "Menu" Placeholder)
-            const menuGeo = new THREE.BoxGeometry(1, 0.6, 0.05);
-            const menuMat = new THREE.MeshStandardMaterial({ color: 0x00e5ff, metalness: 0.7, roughness: 0.2 });
-            const menu = new THREE.Mesh(menuGeo, menuMat);
-            menu.position.set(0, 0, -3); 
-            scene.add(menu);
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
+            // Default Object (Test Cube)
+            const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            const material = new THREE.MeshStandardMaterial({ color: 0x00e5ff, roughness: 0.5 });
+            const placeholder = new THREE.Mesh(geometry, material);
+            objectContainer.add(placeholder);
+            
+            // Lights
+            const light = new THREE.DirectionalLight(0xffffff, 1.5);
+            light.position.set(0, 10, 10);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0x404040));
 
-            // 6. ANIMATION LOOP
-            function loop() {
-                requestAnimationFrame(loop);
+            // Initial placement
+            objectContainer.position.set(0, 0, -2);
 
-                // Update SLAM Tracking (Visual SLAM)
-                const pose = alva.findPose(video); 
-                if (pose) {
-                    const m = new THREE.Matrix4().fromArray(pose);
-                    m.decompose(camLeft.position, camLeft.quaternion, camLeft.scale);
-                    camRight.quaternion.copy(camLeft.quaternion);
-                    
-                    // Separation for VR (IPD)
-                    camLeft.position.x -= 0.03;
-                    camRight.position.x += 0.03;
-
-                    // Keep Background Mesh aligned with head movement
-                    bgMesh.quaternion.copy(camLeft.quaternion);
-                    bgMesh.position.copy(camLeft.position).add(new THREE.Vector3(0,0,-10).applyQuaternion(camLeft.quaternion));
-                }
-
-                // RENDER SIDE-BY-SIDE
-                const w = window.innerWidth, h = window.innerHeight;
-                renderer.setScissorTest(true);
-
-                // Render Left Eye
-                renderer.setViewport(0, 0, w / 2, h);
-                renderer.setScissor(0, 0, w / 2, h);
-                renderer.render(scene, camLeft);
-
-                // Render Right Eye
-                renderer.setViewport(w / 2, 0, w / 2, h);
-                renderer.setScissor(w / 2, 0, w / 2, h);
-                renderer.render(scene, camRight);
-            }
+            document.getElementById('status').innerText = "TRACKING ACTIVE - TAP TO PLACE";
+            
+            // 6. START LOOP
             loop();
         }
 
+        // --- IMPORT LOGIC ---
+        document.getElementById('file-input').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const url = URL.createObjectURL(file);
+            const loader = new THREE.GLTFLoader();
+
+            document.getElementById('status').innerText = "LOADING MODEL...";
+
+            loader.load(url, (gltf) => {
+                // Clear existing model
+                while(objectContainer.children.length > 0){ 
+                    objectContainer.remove(objectContainer.children[0]); 
+                }
+
+                const model = gltf.scene;
+                
+                // Auto-Scale Logic (Make sure it's not too huge or tiny)
+                const box = new THREE.Box3().setFromObject(model);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 0.5 / maxDim; // Scale to be roughly 0.5 meters
+                model.scale.setScalar(scale);
+
+                objectContainer.add(model);
+                document.getElementById('status').innerText = "MODEL LOADED! TAP TO PLACE.";
+                
+                // Close UI if open
+                document.getElementById('ui').style.display = 'none';
+            }, undefined, (error) => {
+                console.error(error);
+                document.getElementById('status').innerText = "ERROR LOADING MODEL";
+            });
+        });
+
+        // --- TAP TO PLACE LOGIC ---
+        window.addEventListener('click', (event) => {
+            // Ignore clicks on buttons
+            if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') return;
+            if (!camLeft) return;
+
+            // Place 1.5m in front of camera
+            const direction = new THREE.Vector3();
+            camLeft.getWorldDirection(direction);
+            
+            objectContainer.position.copy(camLeft.position);
+            objectContainer.position.add(direction.multiplyScalar(1.5));
+            
+            // Make object face the user
+            objectContainer.lookAt(camLeft.position);
+        });
+
+        function loop() {
+            requestAnimationFrame(loop);
+
+            // TRACKING: Update cameras based on Alva SLAM
+            const pose = alva.findPose(video); 
+            if (pose) {
+                const m = new THREE.Matrix4().fromArray(pose);
+                m.decompose(camLeft.position, camLeft.quaternion, camLeft.scale);
+                
+                // Sync Right Eye
+                camRight.quaternion.copy(camLeft.quaternion);
+                camRight.position.copy(camLeft.position);
+                
+                // IPD Offset
+                camLeft.translateX(-0.03);
+                camRight.translateX(0.03);
+            }
+
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            renderer.setScissorTest(true);
+
+            // LEFT EYE
+            renderer.setViewport(0, 0, w / 2, h);
+            renderer.setScissor(0, 0, w / 2, h);
+            renderer.clear(); 
+            renderer.render(bgScene, bgCam); 
+            renderer.render(scene, camLeft); 
+
+            // RIGHT EYE
+            renderer.setViewport(w / 2, 0, w / 2, h);
+            renderer.setScissor(w / 2, 0, w / 2, h);
+            renderer.render(bgScene, bgCam); 
+            renderer.render(scene, camRight); 
+        }
+
         document.getElementById('start-btn').onclick = () => {
+            // Only hide UI if a model is loaded or we just want to start with the cube
+            // If user hasn't imported, they can still do it later, but we hide the big menu
             document.getElementById('ui').style.display = 'none';
             init();
         };
