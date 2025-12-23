@@ -3,25 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SBS 55mm Seamless</title>
+    <title>SBS Ultra-Close</title>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100vw; height: 100vh; 
-            background: #000; overflow: hidden; 
+            background: #000 !important; overflow: hidden; 
         }
 
-        /* Fullscreen Toggle - Top Left */
         #fs-btn {
-            position: absolute; top: 15px; left: 15px; z-index: 100;
-            padding: 12px; background: rgba(255, 255, 255, 0.1);
-            color: white; border: 1px solid rgba(255, 255, 255, 0.3); 
-            border-radius: 4px; cursor: pointer; font-family: sans-serif;
+            position: fixed; top: 10px; left: 10px; z-index: 9999;
+            padding: 15px; background: rgba(255, 255, 255, 0.1);
+            color: white; border: 1px solid white;
         }
 
-        /* THE WINDOWS
-           Locked at 55mm Width
-           Height calculated at 36.66mm for 1.5:1 ratio
-        */
         .eye {
             position: absolute;
             top: 50%;
@@ -30,25 +24,27 @@
             transform: translateY(-50%);
             background: #000;
             overflow: hidden;
+            border: none !important; /* Forces no borders */
         }
 
-        /* Positioned to touch exactly at the 50% center line */
+        /* To bring them CLOSER than the center, we use 'left' 
+           with a calculation. 50% is dead center. 
+           We are pulling them 5mm PAST the center to force them together.
+        */
         #left-eye {
-            right: 50%;
+            left: calc(50% - 53mm); /* Pulled inward */
         }
 
         #right-eye {
-            left: 50%;
+            left: calc(50% - 2mm); /* Pulled inward */
         }
 
         video {
             width: 100%;
             height: 100%;
-            object-fit: fill; /* Fits the whole 16:9 frame into the 1.5:1 window */
+            object-fit: fill;
+            display: block;
         }
-
-        /* Hide button when fullscreen for zero distraction */
-        :fullscreen #fs-btn { opacity: 0.1; }
     </style>
 </head>
 <body>
@@ -66,16 +62,12 @@
         async function start() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: "environment", 
-                        width: { ideal: 4096 }, 
-                        height: { ideal: 2160 } 
-                    }
+                    video: { facingMode: "environment", width: { ideal: 4096 }, height: { ideal: 2160 } }
                 });
                 document.getElementById('v1').srcObject = stream;
                 document.getElementById('v2').srcObject = stream;
             } catch (e) {
-                alert("Camera access requires HTTPS or localhost.");
+                alert("SSL/HTTPS required.");
             }
         }
 
@@ -86,7 +78,6 @@
                 document.exitFullscreen();
             }
         }
-
         start();
     </script>
 </body>
