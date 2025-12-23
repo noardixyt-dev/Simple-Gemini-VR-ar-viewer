@@ -3,64 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SBS VR Pass-Through</title>
+    <title>VR SBS Fixed IPD</title>
     <style>
-        * { box-sizing: border-box; }
-        body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            background: #000; overflow: hidden; 
+        :root {
+            /* ADJUST THESE TO MATCH YOUR EYES/HEADSET */
+            --horizontal-shift: 5%; /* Higher % moves images further apart, Lower % closer */
+            --aspect-ratio-width: 1.5;
+            --aspect-ratio-height: 1;
         }
 
-        /* Container for the two eyes */
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background: #000; overflow: hidden; display: flex; align-items: center;
+        }
+
         .sbs-wrapper {
             display: flex;
             width: 100vw;
-            height: 100vh;
+            /* Creates the 1.5:1 ratio box while maintaining black bars on top/bottom */
+            aspect-ratio: calc(var(--aspect-ratio-width) * 2) / var(--aspect-ratio-height);
+            max-width: 100%;
+            margin: auto;
         }
 
         .eye {
-            position: relative;
             flex: 1;
             height: 100%;
             overflow: hidden;
+            position: relative;
             background: #000;
         }
 
-        /* Border to help align the headset center */
-        .eye:first-child { border-right: 1px solid rgba(255,255,255,0.1); }
-
         video {
             position: absolute;
-            top: 50%;
-            left: 50%;
-            min-width: 100%;
-            min-height: 100%;
+            height: 100%;
             width: auto;
-            height: auto;
-            transform: translate(-50%, -50%);
-            /* This ensures the image isn't stretched/skinny */
-            object-fit: cover; 
+            top: 50%;
+            transform: translateY(-50%);
+            object-fit: contain;
         }
 
-        /* UI Toggle Button */
+        /* Shift the Left Eye video slightly to the right */
+        #left {
+            right: var(--horizontal-shift);
+        }
+
+        /* Shift the Right Eye video slightly to the left */
+        #right {
+            left: var(--horizontal-shift);
+        }
+
         #fs-toggle {
             position: fixed;
             top: 15px;
             left: 15px;
             z-index: 100;
-            padding: 12px 18px;
-            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.2);
             color: #fff;
             border: 1px solid #fff;
             border-radius: 4px;
-            font-size: 14px;
-            text-transform: uppercase;
             cursor: pointer;
         }
 
-        /* Hide button when in fullscreen for immersion */
-        :fullscreen #fs-toggle { opacity: 0.2; }
-        :fullscreen #fs-toggle:hover { opacity: 1; }
+        :fullscreen #fs-toggle { opacity: 0.1; }
     </style>
 </head>
 <body>
@@ -81,7 +87,6 @@
             const constraints = {
                 video: {
                     facingMode: "environment",
-                    // Forcing the highest possible resolution available
                     width: { ideal: 3840 }, 
                     height: { ideal: 2160 }
                 }
@@ -92,20 +97,18 @@
                 v1.srcObject = stream;
                 v2.srcObject = stream;
             } catch (err) {
-                console.error("Access denied:", err);
-                alert("Please use HTTPS and allow camera access.");
+                alert("Use HTTPS to access the camera.");
             }
         }
 
         btn.addEventListener('click', () => {
             if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(e => console.log(e));
+                document.documentElement.requestFullscreen();
             } else {
                 document.exitFullscreen();
             }
         });
 
-        // Ensure video plays immediately on load
         window.addEventListener('load', init);
     </script>
 </body>
