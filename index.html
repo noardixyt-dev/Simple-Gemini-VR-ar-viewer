@@ -3,92 +3,97 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>VR SBS Fixed IPD</title>
+    <title>Full View SBS</title>
     <style>
-        :root {
-            /* ADJUST THESE TO MATCH YOUR EYES/HEADSET */
-            --horizontal-shift: 5%; /* Higher % moves images further apart, Lower % closer */
-            --aspect-ratio-width: 1.5;
-            --aspect-ratio-height: 1;
-        }
-
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
-            background: #000; overflow: hidden; display: flex; align-items: center;
+            background: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
         }
 
+        /* Container for the two eyes */
         .sbs-wrapper {
             display: flex;
             width: 100vw;
-            /* Creates the 1.5:1 ratio box while maintaining black bars on top/bottom */
-            aspect-ratio: calc(var(--aspect-ratio-width) * 2) / var(--aspect-ratio-height);
-            max-width: 100%;
-            margin: auto;
+            height: 100vh;
         }
 
-        .eye {
+        .eye-container {
             flex: 1;
             height: 100%;
-            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* This creates the 1.5:1 window you requested */
+        .eye-window {
+            width: 90%; /* Adjust width to fit your headset lenses */
+            aspect-ratio: 1.5 / 1; 
+            background: #111; /* Slight background to see the window bounds */
             position: relative;
-            background: #000;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
 
         video {
-            position: absolute;
+            /* 'contain' ensures you see the WHOLE camera feed without cropping */
+            width: 100%;
             height: 100%;
-            width: auto;
-            top: 50%;
-            transform: translateY(-50%);
             object-fit: contain;
         }
 
-        /* Shift the Left Eye video slightly to the right */
-        #left {
-            right: var(--horizontal-shift);
-        }
-
-        /* Shift the Right Eye video slightly to the left */
-        #right {
-            left: var(--horizontal-shift);
-        }
-
+        /* Fullscreen Button - Top Left */
         #fs-toggle {
             position: fixed;
-            top: 15px;
-            left: 15px;
-            z-index: 100;
-            padding: 10px 15px;
-            background: rgba(255, 255, 255, 0.2);
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            padding: 12px 18px;
+            background: rgba(255, 255, 255, 0.1);
             color: #fff;
             border: 1px solid #fff;
             border-radius: 4px;
             cursor: pointer;
+            backdrop-filter: blur(4px);
         }
 
-        :fullscreen #fs-toggle { opacity: 0.1; }
+        :fullscreen #fs-toggle {
+            opacity: 0.3;
+        }
     </style>
 </head>
 <body>
 
-    <button id="fs-toggle">Toggle Fullscreen</button>
+    <button id="fs-toggle">FULLSCREEN</button>
 
     <div class="sbs-wrapper">
-        <div class="eye"><video id="left" autoplay playsinline muted></video></div>
-        <div class="eye"><video id="right" autoplay playsinline muted></video></div>
+        <div class="eye-container">
+            <div class="eye-window">
+                <video id="v1" autoplay playsinline muted></video>
+            </div>
+        </div>
+        <div class="eye-container">
+            <div class="eye-window">
+                <video id="v2" autoplay playsinline muted></video>
+            </div>
+        </div>
     </div>
 
     <script>
-        const v1 = document.getElementById('left');
-        const v2 = document.getElementById('right');
+        const v1 = document.getElementById('v1');
+        const v2 = document.getElementById('v2');
         const btn = document.getElementById('fs-toggle');
 
-        async function init() {
+        async function start() {
+            // Requesting the absolute maximum resolution the hardware allows
             const constraints = {
-                video: {
+                video: { 
                     facingMode: "environment",
-                    width: { ideal: 3840 }, 
-                    height: { ideal: 2160 }
+                    width: { ideal: 4096 },
+                    height: { ideal: 2160 } 
                 }
             };
 
@@ -97,7 +102,8 @@
                 v1.srcObject = stream;
                 v2.srcObject = stream;
             } catch (err) {
-                alert("Use HTTPS to access the camera.");
+                console.error(err);
+                alert("Please use HTTPS and grant camera permissions.");
             }
         }
 
@@ -109,7 +115,7 @@
             }
         });
 
-        window.addEventListener('load', init);
+        start();
     </script>
 </body>
 </html>
