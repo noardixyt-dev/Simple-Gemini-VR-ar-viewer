@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Stereo VIO AR Engine</title>
+    <title>Stereo AR Viewer</title>
     <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR@master/dist/alva_ar.js"></script>
     <script type="importmap">
         {
@@ -17,27 +17,17 @@
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; color: #00e5ff; }
         #three-canvas { position: absolute; inset: 0; z-index: 10; }
         #ui { position: absolute; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .btn { background: #00e5ff; color: #000; padding: 20px 45px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; box-shadow: 0 0 25px rgba(0,229,255,0.5); }
-        
-        /* 2. Landscape Lockdown CSS */
-        #rotate-overlay { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        .btn { background: #00e5ff; color: #000; padding: 20px 45px; border-radius: 50px; font-weight: bold; cursor: pointer; border: none; font-size: 1.3rem; }
+        #rotate-overlay { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; }
         @media (orientation: portrait) { #rotate-overlay { display: flex; } }
-        .phone-icon { width: 50px; height: 90px; border: 3px solid #00e5ff; border-radius: 5px; animation: rot 2s infinite; margin-bottom: 20px; }
-        @keyframes rot { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
     </style>
 </head>
 <body>
-    <div id="rotate-overlay">
-        <div class="phone-icon"></div>
-        <h2>ROTATE TO LANDSCAPE</h2>
-        <p>Stereo AR requires wide-view mode</p>
-    </div>
-
+    <div id="rotate-overlay"><h2>ROTATE TO LANDSCAPE</h2></div>
     <canvas id="three-canvas"></canvas>
-    
     <div id="ui">
         <h1>VIO STEREO SYSTEM</h1>
-        <p id="msg">System Standby</p>
+        <p id="msg">Awaiting System Load...</p>
         <button class="btn" id="startBtn">START ENGINE</button>
     </div>
 
@@ -51,22 +41,16 @@
         const IPD = 0.064; 
 
         async function init() {
-            // Check if AlvaAR loaded properly
+            // Check if the library is ready
             if (typeof AlvaAR === 'undefined') {
-                document.getElementById('msg').innerText = "Library error. Refresh page.";
+                document.getElementById('msg').innerText = "Library not loaded. Please refresh.";
                 return;
             }
 
-            document.getElementById('msg').innerText = "Requesting Permissions...";
+            document.getElementById('msg').innerText = "Requesting Access...";
 
-            // A. Request Fullscreen & Orientation Lock
             try {
-                if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
-                if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
-            } catch (e) { console.warn("Lock failed - using CSS fallback."); }
-
-            // B. Request Camera
-            try {
+                // 1. Camera Access
                 video = document.createElement('video');
                 video.autoplay = video.muted = video.playsInline = true;
                 const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -74,42 +58,39 @@
                 });
                 video.srcObject = stream;
                 await video.play();
-            } catch (e) {
-                document.getElementById('msg').innerText = "Camera Access Denied.";
-                return;
-            }
 
-            // C. Request Motion Sensors (Crucial for iOS)
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
+                // 2. Sensor Permissions (Important for iOS)
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                     const status = await DeviceOrientationEvent.requestPermission();
                     if (status !== 'granted') {
-                        document.getElementById('msg').innerText = "Sensor Permission Denied.";
+                        document.getElementById('msg').innerText = "Sensor Access Denied.";
                         return;
                     }
-                } catch (e) { console.error(e); }
+                }
+
+                // 3. Sensor Listener
+                window.addEventListener('deviceorientation', (e) => {
+                    const alpha = THREE.MathUtils.degToRad(e.alpha);
+                    const beta = THREE.MathUtils.degToRad(e.beta);
+                    const gamma = THREE.MathUtils.degToRad(e.gamma);
+                    const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
+                    const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+                    deviceRot.setFromEuler(euler);
+                    deviceRot.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient));
+                });
+
+                // 4. Initialize Tracking
+                trackCanvas = document.createElement('canvas');
+                trackCanvas.width = 1280; trackCanvas.height = 720;
+                trackCtx = trackCanvas.getContext('2d');
+                alva = await AlvaAR.Initialize(1280, 720);
+
+                setupThree();
+                document.getElementById('ui').style.display = 'none';
+                animate();
+            } catch (e) {
+                document.getElementById('msg').innerText = "Error: " + e.message;
             }
-
-            // D. Set up Sensor Fusion tracking
-            window.addEventListener('deviceorientation', (e) => {
-                const alpha = THREE.MathUtils.degToRad(e.alpha);
-                const beta = THREE.MathUtils.degToRad(e.beta);
-                const gamma = THREE.MathUtils.degToRad(e.gamma);
-                const orient = window.orientation ? THREE.MathUtils.degToRad(window.orientation) : 0;
-                const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-                deviceRot.setFromEuler(euler);
-                deviceRot.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -orient));
-            });
-
-            // E. Initialize AR Math
-            trackCanvas = document.createElement('canvas');
-            trackCanvas.width = 1280; trackCanvas.height = 720;
-            trackCtx = trackCanvas.getContext('2d');
-            alva = await AlvaAR.Initialize(1280, 720);
-
-            setupThree();
-            document.getElementById('ui').style.display = 'none';
-            animate();
         }
 
         function setupThree() {
@@ -118,12 +99,10 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.autoClear = false;
 
-            // Stereo Background Setup (renders world once for each eye)
             bgScene = new THREE.Scene();
             bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
             videoTexture = new THREE.VideoTexture(video);
-            const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false }));
-            bgScene.add(bgMesh);
+            bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false })));
 
             scene = new THREE.Scene();
             const aspect = (window.innerWidth / 2) / window.innerHeight;
@@ -151,20 +130,13 @@
 
             const w = window.innerWidth, h = window.innerHeight;
             renderer.clear();
-
-            // Left Eye
             renderer.setViewport(0, 0, w/2, h);
-            renderer.render(bgScene, bgCamera);
-            renderer.render(scene, cameraL);
-
-            // Right Eye
+            renderer.render(bgScene, bgCamera); renderer.render(scene, cameraL);
             renderer.setViewport(w/2, 0, w/2, h);
-            renderer.render(bgScene, bgCamera);
-            renderer.render(scene, cameraR);
+            renderer.render(bgScene, bgCamera); renderer.render(scene, cameraR);
         }
 
         document.getElementById('startBtn').onclick = init;
     </script>
 </body>
 </html>
-
