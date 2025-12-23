@@ -1,126 +1,112 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>Dual-Eye Stereo Passthrough</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stereoscopic Camera VR</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #vr-mask {
-            position: fixed; inset: 0; z-index: 100; pointer-events: none;
-            display: flex; justify-content: space-around; align-items: center;
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: black;
+            overflow: hidden;
+            display: flex;
         }
-        .lens {
-            width: 85vh; height: 85vh; border-radius: 50%;
-            box-shadow: 0 0 0 2000px black;
+
+        /* Container for the two "eyes" */
+        .viewport {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
         }
-        #ui { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: #111; color: #fff; flex-direction: column; }
-        button { padding: 25px 50px; font-weight: bold; background: #00e5ff; border: none; border-radius: 10px; cursor: pointer; }
+
+        /* Each eye takes up half the screen */
+        .eye {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            border-right: 1px solid #222; /* Slight divider */
+        }
+
+        video {
+            position: absolute;
+            height: 100%;
+            width: 100%;
+            object-fit: cover; /* Ensures the screen is filled */
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Fullscreen Toggle Button */
+        #fs-btn {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            padding: 12px 20px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: sans-serif;
+        }
+
+        #fs-btn:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
     </style>
 </head>
 <body>
 
-    <div id="ui">
-        <button id="start">START DUAL-EYE VIEW</button>
+    <button id="fs-btn">Toggle Fullscreen</button>
+
+    <div class="viewport">
+        <div class="eye"><video id="leftEye" autoplay playsinline muted></video></div>
+        <div class="eye"><video id="rightEye" autoplay playsinline muted></video></div>
     </div>
 
-    <div id="vr-mask" style="display:none">
-        <div class="lens"></div>
-        <div class="lens"></div>
-    </div>
+    <script>
+        const leftVideo = document.getElementById('leftEye');
+        const rightVideo = document.getElementById('rightEye');
+        const fsBtn = document.getElementById('fs-btn');
 
-    <script type="module">
-        let renderer, videoTexture;
-        let sceneL, sceneR, camL, camR;
-        let hologramL, hologramR;
-        let sensorRot = new THREE.Quaternion();
+        // Request highest resolution possible
+        const constraints = {
+            video: {
+                width: { ideal: 4096 },
+                height: { ideal: 2160 },
+                facingMode: "environment" // Uses back camera on mobile
+            },
+            audio: false
+        };
 
-        async function init() {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
-            });
-            const video = document.createElement('video');
-            video.srcObject = stream;
-            video.setAttribute('playsinline', '');
-            await video.play();
-            videoTexture = new THREE.VideoTexture(video);
-
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.autoClear = false;
-            document.body.appendChild(renderer.domElement);
-
-            // SETUP TWO IDENTICAL SCENES (One for each eye)
-            const setupEye = (isLeft) => {
-                const scene = new THREE.Scene();
-                const aspect = (window.innerWidth / 2) / window.innerHeight;
-                const cam = new THREE.PerspectiveCamera(70, aspect, 0.1, 1000);
-                
-                // 1. Add the Camera Feed as a background plane to EACH eye
-                const bgGeom = new THREE.PlaneGeometry(16, 9);
-                const bgMat = new THREE.MeshBasicMaterial({ map: videoTexture });
-                const bgMesh = new THREE.Mesh(bgGeom, bgMat);
-                bgMesh.position.z = -8; // Push back so it's the "wall"
-                scene.add(bgMesh);
-
-                // 2. Add the Hologram to EACH eye
-                const holo = new THREE.Mesh(
-                    new THREE.BoxGeometry(0.5, 0.5, 0.5), 
-                    new THREE.MeshNormalMaterial()
-                );
-                holo.position.set(0, 0, -3);
-                scene.add(holo);
-
-                return { scene, cam, holo };
-            };
-
-            const left = setupEye(true);
-            const right = setupEye(false);
-
-            sceneL = left.scene; camL = left.cam; hologramL = left.holo;
-            sceneR = right.scene; camR = right.cam; hologramR = right.holo;
-
-            window.addEventListener('deviceorientation', (e) => {
-                if (!e.alpha) return;
-                const alpha = THREE.MathUtils.degToRad(e.alpha);
-                const beta = THREE.MathUtils.degToRad(e.beta);
-                const gamma = THREE.MathUtils.degToRad(e.gamma);
-                sensorRot.setFromEuler(new THREE.Euler(beta, alpha, -gamma, 'YXZ'));
-            });
-
-            function animate() {
-                requestAnimationFrame(animate);
-
-                // Track the hologram for both eyes
-                hologramL.quaternion.copy(sensorRot).invert();
-                hologramR.quaternion.copy(sensorRot).invert();
-
-                const w = window.innerWidth, h = window.innerHeight;
-                renderer.setScissorTest(true);
-
-                // DRAW LEFT EYE (Full duplication)
-                renderer.setViewport(0, 0, w / 2, h);
-                renderer.setScissor(0, 0, w / 2, h);
-                renderer.clear();
-                renderer.render(sceneL, camL);
-
-                // DRAW RIGHT EYE (Full duplication)
-                renderer.setViewport(w / 2, 0, w / 2, h);
-                renderer.setScissor(w / 2, 0, w / 2, h);
-                renderer.render(sceneR, camR);
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                leftVideo.srcObject = stream;
+                rightVideo.srcObject = stream;
+            } catch (err) {
+                console.error("Error accessing camera: ", err);
+                alert("Camera access denied or not supported.");
             }
-            animate();
         }
 
-        document.getElementById('start').onclick = () => {
-            document.getElementById('ui').style.display = 'none';
-            document.getElementById('vr-mask').style.display = 'flex';
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(init);
-            } else { init(); }
-        };
+        // Fullscreen Toggle Logic
+        fsBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    alert(`Error attempting to enable full-screen mode: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        initCamera();
     </script>
 </body>
 </html>
