@@ -3,116 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SBS 55mm Precision Fit</title>
+    <title>SBS Fixed Center</title>
     <style>
-        :root {
-            /* ADJUST THIS TO MOVE THEM CLOSER OR FURTHER */
-            /* Negative moves them toward the center of the phone */
-            --ipd-offset: -10mm; 
-        }
-
         body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
+            margin: 0; padding: 0; width: 100vw; height: 100vh; 
             background: #000; overflow: hidden; 
         }
 
-        .sbs-wrapper {
-            display: flex;
-            width: 100vw;
-            height: 100vh;
+        /* The Button */
+        #fs-btn {
+            position: absolute; top: 15px; left: 15px; z-index: 100;
+            padding: 12px; background: rgba(255, 255, 255, 0.2);
+            color: white; border: 1px solid white; cursor: pointer;
         }
 
-        .eye-container {
-            flex: 1;
-            height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        /* 55mm Wide, 1.5:1 Ratio (36.66mm Height) */
-        .eye-window {
-            width: 55mm; 
+        /* THE WINDOWS
+           Width: 55mm
+           Height: 36.66mm (1.5:1 ratio)
+        */
+        .eye {
+            position: absolute;
+            top: 50%;
+            width: 55mm;
             height: 36.66mm;
-            position: relative;
+            transform: translateY(-50%);
             background: #000;
             overflow: hidden;
-            /* No borders, just the video */
         }
 
-        /* Shift the left window right, and the right window left */
-        #left-window { transform: translateX(calc(var(--ipd-offset) * -1)); }
-        #right-window { transform: translateX(var(--ipd-offset)); }
+        /* SPACING 
+           Adjust 'margin' to move them closer or further.
+           A smaller margin-left/right pulls them toward the center line.
+        */
+        #left-eye {
+            right: 50%;
+            margin-right: 2mm; /* Distance from center line */
+        }
+
+        #right-eye {
+            left: 50%;
+            margin-left: 2mm;  /* Distance from center line */
+        }
 
         video {
             width: 100%;
             height: 100%;
-            object-fit: fill; 
+            object-fit: fill;
         }
-
-        #fs-btn {
-            position: fixed;
-            top: 15px;
-            left: 15px;
-            z-index: 1000;
-            padding: 10px 15px;
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            backdrop-filter: blur(2px);
-        }
-
-        :fullscreen #fs-btn { opacity: 0.1; }
     </style>
 </head>
 <body>
 
-    <button id="fs-btn">FULLSCREEN</button>
+    <button id="fs-btn" onclick="toggleFS()">FULLSCREEN</button>
 
-    <div class="sbs-wrapper">
-        <div class="eye-container">
-            <div class="eye-window" id="left-window">
-                <video id="v1" autoplay playsinline muted></video>
-            </div>
-        </div>
-        <div class="eye-container">
-            <div class="eye-window" id="right-window">
-                <video id="v2" autoplay playsinline muted></video>
-            </div>
-        </div>
+    <div id="left-eye" class="eye">
+        <video id="v1" autoplay playsinline muted></video>
+    </div>
+    <div id="right-eye" class="eye">
+        <video id="v2" autoplay playsinline muted></video>
     </div>
 
     <script>
-        const v1 = document.getElementById('v1');
-        const v2 = document.getElementById('v2');
-        const btn = document.getElementById('fs-btn');
-
         async function start() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: "environment",
-                        width: { ideal: 4096 },
-                        height: { ideal: 2160 } 
-                    }
+                    video: { facingMode: "environment", width: { ideal: 4096 }, height: { ideal: 2160 } }
                 });
-                v1.srcObject = stream;
-                v2.srcObject = stream;
-            } catch (err) {
-                alert("Camera access requires HTTPS.");
+                document.getElementById('v1').srcObject = stream;
+                document.getElementById('v2').srcObject = stream;
+            } catch (e) {
+                alert("HTTPS required for camera.");
             }
         }
 
-        btn.addEventListener('click', () => {
+        function toggleFS() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen();
             } else {
                 document.exitFullscreen();
             }
-        });
+        }
 
         start();
     </script>
