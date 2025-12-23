@@ -2,29 +2,23 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Noardix AR-Cloner V10</title>
+    <title>Noardix AR-Cloner</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #ui { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; 
-              display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.8); 
-              padding: 15px; border-radius: 15px; color: #00e5ff; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; color: #00e5ff; text-align: center; }
         button { background: #00e5ff; border: none; padding: 12px 24px; border-radius: 20px; font-weight: bold; margin: 5px; cursor: pointer; }
-        /* The Cardboard Lens Look */
-        #lens-mask {
-            position: fixed; inset: 0; pointer-events: none; z-index: 500;
-            background: radial-gradient(circle at 25% 50%, transparent 35%, black 65%),
-                        radial-gradient(circle at 75% 50%, transparent 35%, black 65%);
-        }
+        #lens-mask { position: fixed; inset: 0; pointer-events: none; z-index: 500; display: none; background: radial-gradient(circle at 25% 50%, transparent 35%, black 65%), radial-gradient(circle at 75% 50%, transparent 35%, black 65%); }
     </style>
 </head>
 <body>
     <div id="ui">
-        <strong>NOARDIX AR-CLONER</strong>
-        <button id="start-btn">1. ACTIVATE AR</button>
+        <strong>NOARDIX VR-AR</strong><br>
+        <button id="start-btn">1. START AR</button>
         <button onclick="document.getElementById('file-input').click()">2. IMPORT MODEL</button>
         <input type="file" id="file-input" accept=".glb" style="display:none">
+        <p style="font-size: 11px;">Find floor -> Tap screen -> Slide into Cardboard</p>
     </div>
     <div id="lens-mask"></div>
 
@@ -34,40 +28,35 @@
         let hitTestSourceRequested = false;
 
         async function init() {
-            // Setup Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // Use Native Phone AR Engine
+            renderer.xr.enabled = true; // Use native phone AR engine
             document.body.appendChild(renderer.domElement);
 
-            // 1. THE AR SCENE (Master Tracking)
+            // 1. THE AR SCENE (Where tracking happens)
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
             scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
 
             // Floor Reticle
-            reticle = new THREE.Mesh(
-                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
-                new THREE.MeshBasicMaterial({ color: 0x00e5ff })
-            );
+            reticle = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x00e5ff }));
             reticle.matrixAutoUpdate = false;
             reticle.visible = false;
             scene.add(reticle);
 
-            // 2. THE MIRROR (Render Target)
-            // This captures the "Finished" AR scene before it hits the screen
+            // 2. THE CLONING SYSTEM
             renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
-            
-            // 3. THE DISPLAY (Side-by-Side)
             finalScene = new THREE.Scene();
             finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
             const material = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
             
+            // Left Eye Quad
             const leftEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
             leftEye.position.set(-0.5, 0, 0);
             finalScene.add(leftEye);
 
+            // Right Eye Quad (Mirror of Left)
             const rightEye = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), material);
             rightEye.position.set(0.5, 0, 0);
             finalScene.add(rightEye);
@@ -80,9 +69,10 @@
                     domOverlay: { root: document.getElementById('ui') }
                 });
                 renderer.xr.setSession(session);
+                document.getElementById('lens-mask').style.display = 'block';
             });
 
-            // File Loading
+            // Model Import
             document.getElementById('file-input').addEventListener('change', (e) => {
                 const url = URL.createObjectURL(e.target.files[0]);
                 new THREE.GLTFLoader().load(url, (gltf) => {
@@ -122,25 +112,24 @@
                 }
             }
 
-            // DUAL-EYE MIRROR TRICK
-            // Step 1: Render the ARCore tracked scene into our hidden "photo"
+            // Step 1: Render the native AR scene into our hidden buffer
             renderer.setRenderTarget(renderTarget);
             renderer.render(scene, camera);
             
-            // Step 2: Draw that "photo" twice on the screen
+            // Step 2: Display the buffer side-by-side on the screen
             renderer.setRenderTarget(null);
             renderer.render(finalScene, finalCamera);
         }
 
-            // Tap to place
-            window.addEventListener('click', () => {
-                if (reticle.visible && model) {
-                    model.position.setFromMatrixPosition(reticle.matrix);
-                    model.visible = true;
-                }
-            });
+        window.addEventListener('click', () => {
+            if (reticle.visible && model) {
+                model.position.setFromMatrixPosition(reticle.matrix);
+                model.visible = true;
+            }
+        });
 
         init();
     </script>
 </body>
 </html>
+,
