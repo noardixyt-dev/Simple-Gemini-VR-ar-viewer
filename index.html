@@ -3,23 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SBS Fixed Center</title>
+    <title>SBS 55mm Seamless</title>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100vw; height: 100vh; 
             background: #000; overflow: hidden; 
         }
 
-        /* The Button */
+        /* Fullscreen Toggle - Top Left */
         #fs-btn {
             position: absolute; top: 15px; left: 15px; z-index: 100;
-            padding: 12px; background: rgba(255, 255, 255, 0.2);
-            color: white; border: 1px solid white; cursor: pointer;
+            padding: 12px; background: rgba(255, 255, 255, 0.1);
+            color: white; border: 1px solid rgba(255, 255, 255, 0.3); 
+            border-radius: 4px; cursor: pointer; font-family: sans-serif;
         }
 
         /* THE WINDOWS
-           Width: 55mm
-           Height: 36.66mm (1.5:1 ratio)
+           Locked at 55mm Width
+           Height calculated at 36.66mm for 1.5:1 ratio
         */
         .eye {
             position: absolute;
@@ -31,25 +32,23 @@
             overflow: hidden;
         }
 
-        /* SPACING 
-           Adjust 'margin' to move them closer or further.
-           A smaller margin-left/right pulls them toward the center line.
-        */
+        /* Positioned to touch exactly at the 50% center line */
         #left-eye {
             right: 50%;
-            margin-right: 2mm; /* Distance from center line */
         }
 
         #right-eye {
             left: 50%;
-            margin-left: 2mm;  /* Distance from center line */
         }
 
         video {
             width: 100%;
             height: 100%;
-            object-fit: fill;
+            object-fit: fill; /* Fits the whole 16:9 frame into the 1.5:1 window */
         }
+
+        /* Hide button when fullscreen for zero distraction */
+        :fullscreen #fs-btn { opacity: 0.1; }
     </style>
 </head>
 <body>
@@ -67,12 +66,16 @@
         async function start() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 4096 }, height: { ideal: 2160 } }
+                    video: { 
+                        facingMode: "environment", 
+                        width: { ideal: 4096 }, 
+                        height: { ideal: 2160 } 
+                    }
                 });
                 document.getElementById('v1').srcObject = stream;
                 document.getElementById('v2').srcObject = stream;
             } catch (e) {
-                alert("HTTPS required for camera.");
+                alert("Camera access requires HTTPS or localhost.");
             }
         }
 
