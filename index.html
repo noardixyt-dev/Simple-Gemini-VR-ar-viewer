@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Floaty VR Passthrough</title>
+    <title>Locked-Float VR</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -14,46 +14,45 @@
         #container { 
             display: flex; align-items: center; justify-content: center; 
             width: 100%; 
-            /* Your 5px left shift + V:10 height offset */
+            /* Hard-coded offsets from your calibration: S:24, V:10, and 5px Left */
             transform: translate(-5px, 10px); 
         }
 
         .eye {
-            /* INCREASED WINDOW SIZE: 
-               Moving from 31vh to 45vh for better FOV */
+            /* Height 45vh for better FOV as requested */
             height: 45vh; 
             width: calc(45vh * 1.77); 
             position: relative; overflow: hidden; border-radius: 40px; 
             background: #000;
-            /* Your S:24 Spacing */
-            margin: 0 24px; 
+            margin: 0 24px; /* S:24 */
+            border: 1px solid #222;
         }
 
         video {
             position: absolute; 
-            /* Shrinking the internal video to 115% 
-               This keeps the scale LIFE-SIZE even with a larger window */
-            width: 115%; height: 115%;
+            /* 130% size gives us a 15% safety 'bleed' on all sides 
+               to move the image without showing black edges */
+            width: 130%; height: 130%;
             object-fit: cover; 
-            left: -7.5%; top: -7.5%;
+            left: -15%; top: -15%;
             will-change: transform;
         }
 
-        #start-overlay {
+        #overlay {
             position: fixed; inset: 0; background: #000; z-index: 100;
             display: flex; align-items: center; justify-content: center;
         }
 
-        #start-btn {
-            padding: 25px 50px; background: #333; color: white;
-            border: 2px solid #555; border-radius: 15px; font-size: 18px;
+        button {
+            padding: 30px 60px; background: #111; color: white;
+            border: 2px solid #444; border-radius: 15px; font-size: 20px;
         }
     </style>
 </head>
 <body>
 
-    <div id="start-overlay">
-        <button id="start-btn" onclick="launch()">START FLOATY-VISION</button>
+    <div id="overlay">
+        <button onclick="launch()">START STABLE VIEW</button>
     </div>
 
     <div id="container">
@@ -63,46 +62,49 @@
 
     <script>
         const vids = document.querySelectorAll('video');
-        let targetX = 0, targetY = 0;
-        let currentX = 0, currentY = 0;
+        let tX = 0, tY = 0; // Target
+        let cX = 0, cY = 0; // Current
 
         async function launch() {
-            document.getElementById('start-overlay').style.display = 'none';
-            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+            document.getElementById('overlay').style.display = 'none';
+            document.documentElement.requestFullscreen();
 
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: "environment", width: 1920, height: 1080, frameRate: 60 }
             });
-            vids.forEach(vid => vid.srcObject = stream);
+            vids.forEach(v => v.srcObject = stream);
 
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(state => {
-                    if (state === 'granted') window.addEventListener('deviceorientation', updateTarget);
-                });
-            } else {
-                window.addEventListener('deviceorientation', updateTarget);
-            }
+                DeviceOrientationEvent.requestPermission().then(reg);
+            } else { reg(); }
             
-            render();
+            requestAnimationFrame(loop);
         }
 
-        function updateTarget(e) {
-            // Gyroscope is much "floatier" than the accelerometer
-            // Multiplier reduced to 1.5 for a natural dampening effect
-            targetX = e.gamma * -1.5;
-            targetY = (e.beta - 75) * -1.5;
+        function reg() {
+            window.addEventListener('deviceorientation', (e) => {
+                // We use a low multiplier (0.8) so it doesn't jump over the window edges
+                // This keeps the "screen" mostly centered in front of your face
+                tX = e.gamma * -0.8;
+                tY = (e.beta - 75) * -0.8;
+
+                // HARD CLAMP: This prevents the video from ever showing 50% of the window
+                // It stops the image before the black background shows
+                const limit = 40; 
+                tX = Math.max(-limit, Math.min(limit, tX));
+                tY = Math.max(-limit, Math.min(limit, tY));
+            });
         }
 
-        function render() {
-            // LERP (Linear Interpolation) 
-            // 0.1 makes it very floaty/dampened. 0.3 would be stiffer.
-            currentX += (targetX - currentX) * 0.1;
-            currentY += (targetY - currentY) * 0.1;
+        function loop() {
+            // LERP smoothing: 0.08 makes it feel very heavy and dampened (OIS-like)
+            cX += (tX - cX) * 0.08;
+            cY += (tY - cY) * 0.08;
 
-            const t = `translate(${currentX}px, ${currentY}px)`;
-            vids.forEach(v => v.style.transform = t);
+            const transform = `translate(${cX}px, ${cY}px)`;
+            vids.forEach(v => v.style.transform = transform);
 
-            requestAnimationFrame(render);
+            requestAnimationFrame(loop);
         }
     </script>
 </body>
