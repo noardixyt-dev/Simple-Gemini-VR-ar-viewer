@@ -1,106 +1,52 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>High-Quality VR Passthrough</title>
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: black;
-            overflow: hidden;
-            display: flex;
-            flex-direction: row; /* Landscape split */
-        }
+<html>
+  <head>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://unpkg.com/aframe-ar-hit-test-component@1.0.0/dist/aframe-ar-hit-test-component.min.js"></script>
+  </head>
+  <body style="margin: 0; overflow: hidden;">
 
-        .view-container {
-            width: 50%;
-            height: 100%;
-            overflow: hidden;
-            position: relative;
-            border-right: 1px solid #222; /* Divider line */
-        }
+    <a-scene 
+      webxr="optionalFeatures: hit-test, local-floor; referenceSpaceType: local-floor;"
+      renderer="antialias: true; alpha: true;">
+      
+      <a-assets>
+        <a-asset-item id="myModel" src="https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb"></a-asset-item>
+      </a-assets>
 
-        video {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            min-width: 100%;
-            min-height: 100%;
-            object-fit: cover;
-        }
+      <a-entity id="cameraRig">
+        <a-camera position="0 1.6 0"></a-camera>
+      </a-entity>
 
-        #ui-overlay {
-            position: fixed;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 10;
-            color: white;
-            font-family: sans-serif;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
-            text-align: center;
-        }
+      <a-entity ar-hit-test="target: #model-anchor; type: footprint;">
+        <a-ring color="#00FF00" rotation="-90 0 0" radius-inner="0.1" radius-outer="0.15"></a-ring>
+      </a-entity>
 
-        button {
-            padding: 10px 20px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-    </style>
-</head>
-<body>
+      <a-entity id="model-anchor" position="0 0 -1" visible="false">
+        <a-entity 
+          gltf-model="#myModel" 
+          scale="0.5 0.5 0.5"
+          animation="property: rotation; to: 0 360 0; loop: true; dur: 10000">
+        </a-entity>
+      </a-entity>
 
-    <div id="ui-overlay">
-        <p>Please rotate to Landscape</p>
-        <button onclick="startCamera()">Start High-Res VR</button>
-    </div>
-
-    <div class="view-container">
-        <video id="videoLeft" autoplay playsinline muted></video>
-    </div>
-
-    <div class="view-container">
-        <video id="videoRight" autoplay playsinline muted></video>
-    </div>
+      <a-light type="ambient" intensity="0.5"></a-light>
+      <a-light type="directional" position="1 1 1"></a-light>
+    </a-scene>
 
     <script>
-        async function startCamera() {
-            const constraints = {
-                video: {
-                    facingMode: { exact: "environment" }, // Forces back camera
-                    width: { ideal: 4096 }, // Requests 4K if available
-                    height: { ideal: 2160 }
-                },
-                audio: false
-            };
+      // Logic to make the model stay visible once placed
+      const reticle = document.querySelector('[ar-hit-test]');
+      const model = document.querySelector('#model-anchor');
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                const videoLeft = document.getElementById('videoLeft');
-                const videoRight = document.getElementById('videoRight');
-                
-                videoLeft.srcObject = stream;
-                videoRight.srcObject = stream;
-
-                // Hide UI after start
-                document.getElementById('ui-overlay').style.display = 'none';
-
-                // Attempt to go Fullscreen
-                if (document.documentElement.requestFullscreen) {
-                    document.documentElement.requestFullscreen();
-                }
-            } catch (err) {
-                console.error("Error accessing camera: ", err);
-                alert("Could not access back camera. Make sure you are using HTTPS and have granted permissions.");
-            }
+      window.addEventListener('click', () => {
+        if (reticle.getAttribute('visible') !== false) {
+          model.setAttribute('visible', 'true');
+          // Copy reticle position to model for "anchoring"
+          model.setAttribute('position', reticle.getAttribute('position'));
         }
+      });
     </script>
-</body>
+  </body>
 </html>
+a
