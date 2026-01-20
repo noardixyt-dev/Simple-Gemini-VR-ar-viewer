@@ -1,96 +1,105 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>6DoF Pro Tracker</title>
+    <title>6DoF World Tracker</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsfeat/0.0.8/jsfeat-min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #ui { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; pointer-events: none; z-index: 10; }
-        #btn { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 15px 30px; background: #0f0; border: none; font-weight: bold; border-radius: 50px; z-index: 20; cursor: pointer; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: monospace; }
+        #controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; }
+        .btn { padding: 12px 20px; background: #0f0; border: none; font-weight: bold; cursor: pointer; border-radius: 5px; }
+        #ui { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; pointer-events: none; }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
-    <div id="ui">SYSTEM: READY<br>6DoF: STANDBY</div>
-    <button id="btn">INITIALIZE 6DoF</button>
+
+    <div id="ui">6DoF STATUS: PENDING<br>MODEL: NONE</div>
+
+    <div id="controls">
+        <button id="startBtn" class="btn">1. START SENSORS</button>
+        <label for="file-upload" id="uploadLabel" class="btn" style="display:none;">2. LOAD .GLB MODEL</label>
+        <input type="file" id="file-upload" accept=".glb,.gltf">
+    </div>
+
     <video id="v" style="display:none" playsinline></video>
 
     <script>
         let scene, camera, renderer, model, videoTexture;
         let pos = new THREE.Vector3(0, 0, 0);
-        let rotation = new THREE.Euler(0, 0, 0, 'YXZ');
+        let orientation = new THREE.Euler(0, 0, 0, 'YXZ');
 
-        async function init() {
-            document.getElementById('btn').style.display = 'none';
-
-            // 1. HIGH-RES VIDEO & SENSORS
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 3840 }, height: { ideal: 2160 } } 
-            });
-            const video = document.getElementById('v');
-            video.srcObject = stream;
-            video.play();
-
-            // 2. THREE.JS SCENE SETUP
+        async function initScene() {
+            // 1. Setup Three.js
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: true, precision: "highp" });
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // Pass-through Video Background
+            // 2. High-Res Camera Background
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 3840 } } 
+            });
+            const video = document.getElementById('v');
+            video.srcObject = stream;
+            video.play();
             videoTexture = new THREE.VideoTexture(video);
             scene.background = videoTexture;
 
-            // 3. 3D MODEL LOADER (.glb / .gltf)
-            const loader = new THREE.GLTFLoader();
-            // Replace with your actual model URL
-            const modelUrl = 'https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb';
-            
-            loader.load(modelUrl, (gltf) => {
-                model = gltf.scene;
-                model.position.set(0, -1.6, -2); // Set on "floor" 2 meters away
-                model.scale.set(0.5, 0.5, 0.5);
-                scene.add(model);
-                document.getElementById('ui').innerHTML = "6DoF: LOCKED<br>MODEL: LOADED";
-            });
-
-            // 4. SENSOR FUSION (IMU + DRIFT CALCULATION)
+            // 3. Sensor Listeners
             window.addEventListener('deviceorientation', (e) => {
-                rotation.set(
+                orientation.set(
                     THREE.MathUtils.degToRad(e.beta),
                     THREE.MathUtils.degToRad(e.alpha),
                     -THREE.MathUtils.degToRad(e.gamma)
                 );
+                document.getElementById('ui').innerHTML = `6DoF: LOCKED<br>POS: ${pos.z.toFixed(2)}m`;
             });
 
             window.addEventListener('devicemotion', (e) => {
-                let acc = e.accelerationIncludingGravity;
-                // Simple low-pass filter to remove gravity noise
-                pos.x += (acc.x * 0.001);
-                pos.z += (acc.z * 0.001); 
+                let a = e.acceleration;
+                // Deadzone to prevent micro-drift
+                if(Math.abs(a.x) > 0.1) pos.x += a.x * 0.02;
+                if(Math.abs(a.z) > 0.1) pos.z -= a.z * 0.02;
             });
 
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('uploadLabel').style.display = 'block';
+            
             animate();
         }
 
+        // 4. Model Loader Logic
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const url = URL.createObjectURL(file);
+            const loader = new THREE.GLTFLoader();
+            
+            if(model) scene.remove(model); // Clear old model
+
+            loader.load(url, (gltf) => {
+                model = gltf.scene;
+                // Place it 2 meters in front of where you started
+                model.position.set(0, -1, -2); 
+                scene.add(model);
+                document.getElementById('ui').innerHTML = "6DoF: LOCKED<br>MODEL: ACTIVE";
+            });
+        });
+
         function animate() {
             requestAnimationFrame(animate);
-            
-            // Sync camera to real-world sensors
-            camera.rotation.copy(rotation);
-            camera.position.lerp(pos, 0.1); // Smooth movement
-
+            camera.rotation.copy(orientation);
+            camera.position.lerp(pos, 0.1); // Smooths out sensor noise
             renderer.render(scene, camera);
         }
 
-        document.getElementById('btn').onclick = () => {
+        document.getElementById('startBtn').onclick = () => {
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(init);
+                DeviceOrientationEvent.requestPermission().then(initScene);
             } else {
-                init();
+                initScene();
             }
         };
     </script>
