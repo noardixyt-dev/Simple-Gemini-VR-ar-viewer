@@ -1,16 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6DoF Tap-to-Place Pro</title>
+    <title>6DoF Physical Anchor</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #video-feed { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
         #ui { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.8); padding: 12px; border-radius: 10px; font-size: 11px; z-index: 10; border: 1px solid #0f0; color: #0f0; pointer-events: none; }
-        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; width: 85%; max-width: 320px; z-index: 20; }
+        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; width: 85%; max-width: 320px; z-index: 20; }
         .btn { padding: 18px; background: #0f0; color: #000; border: none; font-weight: bold; border-radius: 14px; cursor: pointer; text-transform: uppercase; }
         input[type="file"] { display: none; }
     </style>
@@ -19,31 +17,32 @@
 
     <video id="video-feed" playsinline muted></video>
     <div id="ui">
-        <b>SYSTEM:</b> <span id="sys">OFFLINE</span><br>
-        <b>LOCK:</b> <span id="lock">NONE</span><br>
-        <i>Tap screen to move object</i>
+        <b>WORLD ANCHOR:</b> <span id="stat">WAITING...</span><br>
+        <b>POSITION:</b> <span id="pos-info">0, 0, 0</span><br>
+        <i>Tap screen to pin object to your table</i>
     </div>
 
     <div id="controls">
-        <button id="start-btn" class="btn">1. Start 6DoF Passthrough</button>
+        <button id="start-btn" class="btn">1. Start Solid Tracking</button>
         <button id="load-btn" class="btn" style="display:none;">2. Load .GLB Model</button>
         <input type="file" id="file-picker" accept=".glb,.gltf">
     </div>
 
     <script>
-        let scene, camera, renderer, worldSpace, model, raycaster, pointer;
-        let pos = new THREE.Vector3(0, 0, 0);
-        let orientation = new THREE.Quaternion();
+        let scene, camera, renderer, worldSpace, model;
+        let phonePos = new THREE.Vector3(0, 0, 0);
+        let phoneRot = new THREE.Quaternion();
 
         async function init() {
+            // 1. High-Quality Passthrough
             const video = document.getElementById('video-feed');
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: "environment", width: { ideal: 4096 } } 
             });
             video.srcObject = stream;
-            await video.play();
+            video.play();
 
-            // 3D Engine Initialization
+            // 2. The Fixed "World" Scene
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -51,52 +50,41 @@
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // Spatial World Setup
+            // Everything in worldSpace stays "glued" to the real room
             worldSpace = new THREE.Group();
             scene.add(worldSpace);
             worldSpace.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-            // Raycaster for Tapping
-            raycaster = new THREE.Raycaster();
-            pointer = new THREE.Vector2();
-
-            // Sensor Fusion (6DoF)
+            // 3. Sensor Fusion (6DoF)
             window.addEventListener('deviceorientation', (e) => {
                 const euler = new THREE.Euler(THREE.MathUtils.degToRad(e.beta), THREE.MathUtils.degToRad(e.alpha), -THREE.MathUtils.degToRad(e.gamma), 'YXZ');
-                orientation.setFromEuler(euler);
-                document.getElementById('lock').innerText = "WORLD ANCHOR ACTIVE";
+                phoneRot.setFromEuler(euler);
+                document.getElementById('stat').innerText = "LOCKED TO SPACE";
             });
 
             window.addEventListener('devicemotion', (e) => {
                 let a = e.acceleration;
-                pos.x += a.x * 0.005; pos.z -= a.z * 0.005;
-                document.getElementById('sys').innerText = "TRACKING SPACE";
+                // These deltas track your physical movement in the room
+                phonePos.x += a.x * 0.005; 
+                phonePos.z -= a.z * 0.005;
+                document.getElementById('pos-info').innerText = `${phonePos.x.toFixed(1)}, ${phonePos.z.toFixed(1)}`;
             });
 
-            // Tap-to-Place Event
-            window.addEventListener('click', onTouch);
+            // 4. Tap-to-Place (Pins the object to a spot in the room)
+            window.addEventListener('click', (event) => {
+                if (!model) return;
+                // Pin the model 2 meters in front of wherever you are currently standing
+                const forward = new THREE.Vector3(0, 0, -2).applyQuaternion(phoneRot);
+                model.position.copy(phonePos).add(forward);
+                model.position.y = -1.6; // Anchor it to "Table/Floor" height
+            });
 
             document.getElementById('start-btn').style.display = 'none';
             document.getElementById('load-btn').style.display = 'block';
             animate();
         }
 
-        function onTouch(event) {
-            if (!model) return;
-            // Calculate tap position
-            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-            // Shoot a ray 3 meters deep into your room
-            raycaster.setFromCamera(pointer, camera);
-            const targetPos = new THREE.Vector3();
-            raycaster.ray.at(3, targetPos); 
-            
-            // Move the model to the tapped spot
-            model.position.copy(targetPos);
-        }
-
-        // File Loading
+        // GLB Loader
         const filePicker = document.getElementById('file-picker');
         document.getElementById('load-btn').onclick = () => filePicker.click();
         filePicker.onchange = (e) => {
@@ -104,15 +92,16 @@
             new THREE.GLTFLoader().load(url, (gltf) => {
                 if(model) worldSpace.remove(model);
                 model = gltf.scene;
-                model.position.set(0, 0, -3); // Default placement
+                model.position.set(0, -1.6, -3); // Default placement
                 worldSpace.add(model);
             });
         };
 
         function animate() {
             requestAnimationFrame(animate);
-            camera.quaternion.copy(orientation);
-            camera.position.lerp(pos, 0.1); 
+            // We move the CAMERA (your phone) through the WORLD
+            camera.quaternion.slerp(phoneRot, 0.1); 
+            camera.position.lerp(phonePos, 0.1);
             renderer.render(scene, camera);
         }
 
