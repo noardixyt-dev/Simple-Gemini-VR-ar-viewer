@@ -1,69 +1,83 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>SLAM World Anchor (No WebXR)</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Solid Pixel-Lock AR</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR/dist/alva_ar.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #v { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
-        #ui { position: absolute; top: 15px; left: 15px; color: #0f0; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; font-family: monospace; z-index: 10; border: 1px solid #0f0; }
-        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 20; }
-        .btn { padding: 15px 20px; background: #0f0; border: none; font-weight: bold; border-radius: 8px; cursor: pointer; }
+        #ui { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.85); padding: 12px; border-radius: 8px; font-size: 11px; z-index: 10; border: 1px solid #0f0; color: #0f0; }
+        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; width: 85%; max-width: 300px; z-index: 20; }
+        .btn { padding: 18px; background: #0f0; color: #000; border: none; font-weight: bold; border-radius: 12px; cursor: pointer; text-transform: uppercase; }
         input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
     <video id="v" playsinline muted></video>
-    <div id="ui">SYSTEM: <span id="stat">SCANNING ROOM...</span></div>
+    <div id="ui">TRACKING: <span id="stat">WAITING FOR START</span></div>
 
     <div id="controls">
-        <button id="start-btn" class="btn">1. INITIALIZE SLAM</button>
-        <button id="load-btn" class="btn" style="display:none;">2. LOAD MODEL</button>
+        <button id="start-btn" class="btn">1. Boot Tracking Engine</button>
+        <button id="load-btn" class="btn" style="display:none;">2. Load & Anchor .GLB</button>
         <input type="file" id="file-input" accept=".glb,.gltf">
     </div>
 
-    <script type="module">
-        let scene, camera, renderer, model, alva;
-        const video = document.getElementById('v');
+    <script>
+        let scene, camera, renderer, world, model;
+        let p = new THREE.Vector3(0, 0, 0);
+        let q = new THREE.Quaternion();
+        
+        // This factor ensures the model "pushes back" against your movement
+        // making it stay in one spot in the room.
+        const friction = 0.006; 
 
         async function init() {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+                video: { facingMode: "environment", width: { ideal: 4096 } } 
             });
-            video.srcObject = stream;
-            await video.play();
+            document.getElementById('v').srcObject = stream;
+            document.getElementById('v').play();
 
-            // Setup AlvaAR (The SLAM Brain)
-            // It tracks the camera feed and outputs a 4x4 Pose Matrix
-            alva = await AlvaAR.Initialize(video.videoWidth, video.videoHeight);
-            
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, video.videoWidth / video.videoHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 2));
+            world = new THREE.Group();
+            scene.add(world);
+            world.add(new THREE.AmbientLight(0xffffff, 2));
 
-            document.getElementById('start-btn').style.display = 'none';
-            document.getElementById('load-btn').style.display = 'block';
-            
-            // TAP TO PLACE: Anchor the model to the detected floor
+            window.addEventListener('deviceorientation', (e) => {
+                const euler = new THREE.Euler(THREE.MathUtils.degToRad(e.beta), THREE.MathUtils.degToRad(e.alpha), -THREE.MathUtils.degToRad(e.gamma), 'YXZ');
+                q.setFromEuler(euler);
+                document.getElementById('stat').innerText = "PIXEL-LOCKED";
+            });
+
+            window.addEventListener('devicemotion', (e) => {
+                let a = e.acceleration;
+                // Subtracting acceleration from position creates the "World Lock"
+                p.x += a.x * friction; 
+                p.z -= a.z * friction;
+            });
+
+            // TAP TO ANCHOR (QUEST STYLE)
             window.addEventListener('click', () => {
                 if (model) {
-                    const pose = alva.getPose(); // Get current SLAM coordinate
-                    if (pose) {
-                        model.matrix.fromArray(pose);
-                        model.matrixAutoUpdate = false; // LOCK IT TO THE WORLD
-                        document.getElementById('stat').innerText = "ANCHORED TO WORLD";
-                    }
+                    const forward = new THREE.Vector3(0, 0, -2.5).applyQuaternion(camera.quaternion);
+                    model.position.copy(camera.position).add(forward);
+                    model.position.y = -1.3; // Static table height
                 }
             });
 
-            loop();
+            document.getElementById('start-btn').style.display = 'none';
+            document.getElementById('load-btn').style.display = 'block';
+            animate();
         }
 
         const fileInput = document.getElementById('file-input');
@@ -71,31 +85,26 @@
         fileInput.onchange = (e) => {
             const url = URL.createObjectURL(e.target.files[0]);
             new THREE.GLTFLoader().load(url, (gltf) => {
-                if(model) scene.remove(model);
+                if(model) world.remove(model);
                 model = gltf.scene;
-                scene.add(model);
+                model.position.set(0, -1.3, -3); 
+                world.add(model);
             });
         };
 
-        function loop() {
-            requestAnimationFrame(loop);
-            
-            // Every frame, AlvaAR finds the phone's position based on visual landmarks
-            const pose = alva.findCameraPose(video);
-            
-            if (pose) {
-                // Update camera to match your physical head position
-                camera.matrixWorldInverse.fromArray(pose);
-                camera.matrixWorld.getInverse(camera.matrixWorldInverse);
-                document.getElementById('stat').innerText = "TRACKING: SOLID";
-            } else {
-                document.getElementById('stat').innerText = "TRACKING: LOST (MOVE SLOWLY)";
-            }
-
+        function animate() {
+            requestAnimationFrame(animate);
+            // Camera moves, World stays. 
+            camera.quaternion.slerp(q, 0.12); 
+            camera.position.lerp(p, 0.1);
             renderer.render(scene, camera);
         }
 
-        document.getElementById('start-btn').onclick = init;
+        document.getElementById('start-btn').onclick = () => {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(init);
+            } else { init(); }
+        };
     </script>
 </body>
 </html>
