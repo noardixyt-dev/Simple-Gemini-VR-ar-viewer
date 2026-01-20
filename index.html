@@ -1,64 +1,137 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro AR Ground Lock</title>
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stereo AR 6DoF</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; background: #000; color: white; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
-        model-viewer { width: 100%; flex-grow: 1; }
-        .controls { padding: 20px; background: #111; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #333; }
-        .btn { width: 100%; padding: 20px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; font-size: 16px; }
-        #pick-btn { background: #444; color: white; }
-        #ar-btn { background: #00ff00; color: #000; display: none; }
-        #msg { text-align: center; font-size: 12px; color: #888; margin-top: 5px; }
+        body { margin: 0; overflow: hidden; background: #000; }
+        #v { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; display: none; }
+        /* Hidden UI for setup */
+        #ui { position: fixed; top: 10px; left: 10px; z-index: 100; display: flex; gap: 10px; }
+        .btn { padding: 10px; background: #0f0; border: none; font-weight: bold; border-radius: 5px; }
     </style>
 </head>
 <body>
 
-    <model-viewer id="mv" 
-        ar 
-        ar-modes="webxr scene-viewer quick-look" 
-        ar-placement="floor" 
-        camera-controls 
-        shadow-intensity="1" 
-        environment-image="neutral"
-        touch-action="pan-y">
-        
-        <div id="ar-prompt" slot="ar-button" style="display:none;"></div>
-    </model-viewer>
-
-    <div class="controls">
-        <button id="pick-btn" class="btn">📂 1. SELECT DOWNLOADED .GLB</button>
-        <button id="ar-btn" class="btn">🚀 2. PIN TO FLOOR</button>
-        <input type="file" id="file-input" accept=".glb,.gltf" style="display: none;">
-        <div id="msg">Model must be under 15MB for best tracking</div>
+    <video id="v" playsinline muted></video>
+    
+    <div id="ui">
+        <button id="start-btn" class="btn">1. START STEREO</button>
+        <button id="load-btn" class="btn" style="display:none;">2. LOAD MODEL</button>
+        <input type="file" id="file-input" accept=".glb,.gltf" style="display:none;">
     </div>
 
     <script>
-        const mv = document.querySelector('#mv');
-        const fileIn = document.querySelector('#file-input');
-        const arBtn = document.querySelector('#ar-btn');
-        const pickBtn = document.querySelector('#pick-btn');
+        let scene, camera, renderer, world, model, stereo;
+        let p = new THREE.Vector3(0, 0, 0);
+        let q = new THREE.Quaternion();
 
-        pickBtn.onclick = () => fileIn.click();
+        async function init() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1920 } } 
+            });
+            const video = document.getElementById('v');
+            video.srcObject = stream;
+            video.play();
 
-        fileIn.onchange = (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                const url = URL.createObjectURL(file);
-                mv.src = url;
-                arBtn.style.display = 'block';
-                pickBtn.innerText = "MODEL LOADED ✅";
-            }
+            // Create 2 background planes (one for each eye)
+            const videoTex = new THREE.VideoTexture(video);
+            
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            // Stereo Camera Setup
+            stereo = new THREE.StereoCamera();
+            stereo.aspect = 0.5; // Each eye gets half the screen width
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.autoClear = false;
+            document.body.appendChild(renderer.domElement);
+
+            world = new THREE.Group();
+            scene.add(world);
+            world.add(new THREE.AmbientLight(0xffffff, 2));
+
+            // Background Video Quad - Attached to camera so it moves with your head
+            const bgGeom = new THREE.PlaneGeometry(2, 2);
+            const bgMat = new THREE.MeshBasicMaterial({ map: videoTex, depthTest: false, depthWrite: false });
+            const bgMesh = new THREE.Mesh(bgGeom, bgMat);
+            bgMesh.position.z = -1; // Keep it behind the 3D model
+            camera.add(bgMesh);
+            scene.add(camera);
+
+            // Tracking sensors
+            window.addEventListener('deviceorientation', (e) => {
+                const euler = new THREE.Euler(THREE.MathUtils.degToRad(e.beta), THREE.MathUtils.degToRad(e.alpha), -THREE.MathUtils.degToRad(e.gamma), 'YXZ');
+                q.setFromEuler(euler);
+            });
+
+            window.addEventListener('devicemotion', (e) => {
+                let a = e.acceleration;
+                p.x += a.x * 0.006; 
+                p.z -= a.z * 0.006;
+            });
+
+            window.addEventListener('click', () => {
+                if (model) {
+                    const dir = new THREE.Vector3(0, 0, -3).applyQuaternion(camera.quaternion);
+                    model.position.copy(camera.position).add(dir);
+                    model.position.y = -1.2;
+                }
+            });
+
+            document.getElementById('start-btn').style.display = 'none';
+            document.getElementById('load-btn').style.display = 'block';
+            animate();
+        }
+
+        const fileInput = document.getElementById('file-input');
+        document.getElementById('load-btn').onclick = () => fileInput.click();
+        fileInput.onchange = (e) => {
+            const url = URL.createObjectURL(e.target.files[0]);
+            new THREE.GLTFLoader().load(url, (gltf) => {
+                if(model) world.remove(model);
+                model = gltf.scene;
+                model.position.set(0, -1.2, -4);
+                world.add(model);
+            });
         };
 
-        // This triggers the phone's native AR hardware
-        arBtn.onclick = () => {
-            mv.activateAR();
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            camera.quaternion.slerp(q, 0.15);
+            camera.position.lerp(p, 0.1);
+
+            // RENDER STEREO SBS
+            const size = new THREE.Vector2();
+            renderer.getSize(size);
+
+            stereo.update(camera);
+
+            // Left Eye
+            renderer.setViewport(0, 0, size.x / 2, size.y);
+            renderer.setScissor(0, 0, size.x / 2, size.y);
+            renderer.setScissorTest(true);
+            renderer.render(scene, stereo.cameraL);
+
+            // Right Eye
+            renderer.setViewport(size.x / 2, 0, size.x / 2, size.y);
+            renderer.setScissor(size.x / 2, 0, size.x / 2, size.y);
+            renderer.setScissorTest(true);
+            renderer.render(scene, stereo.cameraR);
+        }
+
+        document.getElementById('start-btn').onclick = () => {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(init);
+            } else { init(); }
         };
     </script>
 </body>
 </html>
-w
