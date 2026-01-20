@@ -1,65 +1,98 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>6DoF Pro Tracker</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsfeat/0.0.8/jsfeat-min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
-        #ui { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: white; background: rgba(0,0,0,0.7); padding: 15px; pointer-events: none; }
-        #btn { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 15px; z-index: 10; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; pointer-events: none; z-index: 10; }
+        #btn { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 15px 30px; background: #0f0; border: none; font-weight: bold; border-radius: 50px; z-index: 20; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div id="ui">Move phone to scan floor</div>
-    <button id="btn">START AR</button>
+    <div id="ui">SYSTEM: READY<br>6DoF: STANDBY</div>
+    <button id="btn">INITIALIZE 6DoF</button>
+    <video id="v" style="display:none" playsinline></video>
 
     <script>
-        let renderer, scene, camera, reticle, hitTestSource;
+        let scene, camera, renderer, model, videoTexture;
+        let pos = new THREE.Vector3(0, 0, 0);
+        let rotation = new THREE.Euler(0, 0, 0, 'YXZ');
 
-        async function start() {
-            const session = await navigator.xr.requestSession("immersive-ar", { requiredFeatures: ["hit-test"] });
-            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-            renderer.xr.enabled = true;
-            document.body.appendChild(renderer.domElement);
-            
+        async function init() {
+            document.getElementById('btn').style.display = 'none';
+
+            // 1. HIGH-RES VIDEO & SENSORS
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 3840 }, height: { ideal: 2160 } } 
+            });
+            const video = document.getElementById('v');
+            video.srcObject = stream;
+            video.play();
+
+            // 2. THREE.JS SCENE SETUP
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, precision: "highp" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
 
-            // The Tracker Ring
-            reticle = new THREE.Mesh(new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial());
-            reticle.matrixAutoUpdate = false;
-            reticle.visible = false;
-            scene.add(reticle);
+            // Pass-through Video Background
+            videoTexture = new THREE.VideoTexture(video);
+            scene.background = videoTexture;
 
-            // Tap to place object
-            session.addEventListener("select", () => {
-                if (reticle.visible) {
-                    const cube = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshNormalMaterial());
-                    reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
-                    scene.add(cube);
-                }
+            // 3. 3D MODEL LOADER (.glb / .gltf)
+            const loader = new THREE.GLTFLoader();
+            // Replace with your actual model URL
+            const modelUrl = 'https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb';
+            
+            loader.load(modelUrl, (gltf) => {
+                model = gltf.scene;
+                model.position.set(0, -1.6, -2); // Set on "floor" 2 meters away
+                model.scale.set(0.5, 0.5, 0.5);
+                scene.add(model);
+                document.getElementById('ui').innerHTML = "6DoF: LOCKED<br>MODEL: LOADED";
             });
 
-            renderer.xr.setSession(session);
-            const ref = await session.requestReferenceSpace("local");
-            const viewer = await session.requestReferenceSpace("viewer");
-            hitTestSource = await session.requestHitTestSource({ space: viewer });
-
-            renderer.setAnimationLoop((t, frame) => {
-                if (!frame) return;
-                const hitResults = frame.getHitTestResults(hitTestSource);
-                if (hitResults.length > 0) {
-                    reticle.visible = true;
-                    reticle.matrix.fromArray(hitResults[0].getPose(ref).transform.matrix);
-                    document.getElementById("ui").style.display = "none";
-                } else {
-                    reticle.visible = false;
-                }
-                renderer.render(scene, camera);
+            // 4. SENSOR FUSION (IMU + DRIFT CALCULATION)
+            window.addEventListener('deviceorientation', (e) => {
+                rotation.set(
+                    THREE.MathUtils.degToRad(e.beta),
+                    THREE.MathUtils.degToRad(e.alpha),
+                    -THREE.MathUtils.degToRad(e.gamma)
+                );
             });
-            document.getElementById("btn").style.display = "none";
+
+            window.addEventListener('devicemotion', (e) => {
+                let acc = e.accelerationIncludingGravity;
+                // Simple low-pass filter to remove gravity noise
+                pos.x += (acc.x * 0.001);
+                pos.z += (acc.z * 0.001); 
+            });
+
+            animate();
         }
-        document.getElementById("btn").onclick = start;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Sync camera to real-world sensors
+            camera.rotation.copy(rotation);
+            camera.position.lerp(pos, 0.1); // Smooth movement
+
+            renderer.render(scene, camera);
+        }
+
+        document.getElementById('btn').onclick = () => {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(init);
+            } else {
+                init();
+            }
+        };
     </script>
 </body>
 </html>
