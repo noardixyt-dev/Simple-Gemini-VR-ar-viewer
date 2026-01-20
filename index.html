@@ -2,123 +2,67 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pro-Grade AR Tracker</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instant AR Ground Tracker</title>
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; }
-        #v { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
-        #overlay { position: absolute; top: 20px; left: 20px; color: #0f0; text-shadow: 1px 1px #000; z-index: 10; font-size: 12px; }
-        #controls { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); width: 80%; display: flex; flex-direction: column; gap: 10px; z-index: 20; }
-        .btn { padding: 20px; background: white; color: black; border: none; font-weight: 800; border-radius: 50px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        #file-input { display: none; }
+        body { margin: 0; font-family: sans-serif; background: #111; color: white; display: flex; flex-direction: column; height: 100vh; }
+        model-viewer { width: 100%; height: 70%; background-color: #222; }
+        .ui { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .btn { 
+            padding: 15px; border-radius: 12px; border: none; font-weight: bold; 
+            text-transform: uppercase; cursor: pointer; font-size: 16px;
+        }
+        #pick-btn { background: #333; color: white; border: 1px solid #555; }
+        #ar-button { 
+            background: #00ff00; color: black; display: none; 
+            box-shadow: 0 0 20px rgba(0,255,0,0.3);
+        }
+        #instructions { font-size: 12px; color: #888; text-align: center; }
     </style>
 </head>
 <body>
 
-    <video id="v" playsinline muted></video>
-    <div id="overlay">
-        <b>TRACKING STATUS:</b> <span id="status">OFFLINE</span><br>
-        <b>WORLD ANCHOR:</b> <span id="anchor-status">NOT SET</span>
-    </div>
+    <model-viewer id="viewer" 
+                  ar 
+                  ar-modes="scene-viewer quick-look" 
+                  camera-controls 
+                  touch-action="pan-y" 
+                  shadow-intensity="1" 
+                  ar-placement="floor">
+        
+        <button slot="ar-button" id="ar-button" class="btn">
+            ✨ Place in your room
+        </button>
+    </model-viewer>
 
-    <div id="controls">
-        <button id="start-btn" class="btn">Start AR Camera</button>
-        <button id="load-btn" class="btn" style="display:none;">Choose 3D Model (.GLB)</button>
-        <input type="file" id="file-input" accept=".glb,.gltf">
+    <div class="ui">
+        <button id="pick-btn" class="btn">📂 Pick 3D Model (.glb)</button>
+        <input type="file" id="file-input" accept=".glb,.gltf" style="display: none;">
+        
+        <div id="instructions">
+            Select a GLB from your downloads, then tap "Place in your room."
+        </div>
     </div>
 
     <script>
-        let scene, camera, renderer, world, model;
-        let phonePos = new THREE.Vector3(0, 0, 0);
-        let phoneRot = new THREE.Quaternion();
-        
-        // This simulates the "SLAM" pushback. 
-        // It's the "secret sauce" that makes Snapchat filters stay put.
-        const LENS_FOV = 60; 
-        const TRACKING_STRENGTH = 0.007;
+        const modelViewer = document.querySelector('#viewer');
+        const fileInput = document.querySelector('#file-input');
+        const pickBtn = document.querySelector('#pick-btn');
+        const arBtn = document.querySelector('#ar-button');
 
-        async function initEngine() {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1920 }, frameRate: { ideal: 60 } } 
-            });
-            document.getElementById('v').srcObject = stream;
-            document.getElementById('v').play();
+        // Allow user to pick a model from their phone
+        pickBtn.onclick = () => fileInput.click();
 
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(LENS_FOV, window.innerWidth / window.innerHeight, 0.01, 1000);
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            document.body.appendChild(renderer.domElement);
-
-            world = new THREE.Group(); // This is the "Real World" coordinate container
-            scene.add(world);
-            world.add(new THREE.AmbientLight(0xffffff, 2.5));
-
-            // 1. Rotation Tracking (Gyro)
-            window.addEventListener('deviceorientation', (e) => {
-                const alpha = e.alpha ? THREE.MathUtils.degToRad(e.alpha) : 0;
-                const beta = e.beta ? THREE.MathUtils.degToRad(e.beta) : 0;
-                const gamma = e.gamma ? THREE.MathUtils.degToRad(e.gamma) : 0;
-                
-                const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-                phoneRot.setFromEuler(euler);
-                document.getElementById('status').innerText = "LOCKING PIXELS...";
-            });
-
-            // 2. Position Tracking (Inertial Odometry)
-            window.addEventListener('devicemotion', (e) => {
-                const acc = e.acceleration;
-                if(!acc.x) return;
-
-                // We move the camera in the OPPOSITE direction of the phone's movement
-                // This keeps the 3D model in the same place in your room.
-                phonePos.x += acc.x * TRACKING_STRENGTH;
-                phonePos.z -= acc.z * TRACKING_STRENGTH;
-            });
-
-            // 3. World Pinning (Tap to place)
-            window.addEventListener('mousedown', () => {
-                if (model) {
-                    const ray = new THREE.Vector3(0, 0, -3).applyQuaternion(camera.quaternion);
-                    model.position.copy(camera.position).add(ray);
-                    model.position.y = -1.5; // Fixed "Table Height"
-                    document.getElementById('anchor-status').innerText = "FIXED TO SURFACE";
-                }
-            });
-
-            document.getElementById('start-btn').style.display = 'none';
-            document.getElementById('load-btn').style.display = 'block';
-            animate();
-        }
-
-        const fileInput = document.getElementById('file-input');
-        document.getElementById('load-btn').onclick = () => fileInput.click();
-        fileInput.onchange = (e) => {
-            const url = URL.createObjectURL(e.target.files[0]);
-            new THREE.GLTFLoader().load(url, (gltf) => {
-                if(model) world.remove(model);
-                model = gltf.scene;
-                model.position.set(0, -1.5, -4); // Initial drop point
-                world.add(model);
-            });
-        };
-
-        function animate() {
-            requestAnimationFrame(animate);
-            // Smoothly move camera to match your physical phone
-            camera.quaternion.slerp(phoneRot, 0.2); 
-            camera.position.lerp(phonePos, 0.1);
-            renderer.render(scene, camera);
-        }
-
-        document.getElementById('start-btn').onclick = () => {
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(initEngine);
-            } else { initEngine(); }
-        };
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                modelViewer.src = url; // Load into the 3D viewer
+                arBtn.style.display = 'block'; // Show the AR button
+                pickBtn.innerText = "Model Loaded ✅";
+            }
+        });
     </script>
 </body>
 </html>
