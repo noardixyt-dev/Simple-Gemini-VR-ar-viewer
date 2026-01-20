@@ -3,15 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stereo AR 6DoF</title>
+    <title>Stereo AR - Fixed Tracking</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #v { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; display: none; }
-        /* Hidden UI for setup */
-        #ui { position: fixed; top: 10px; left: 10px; z-index: 100; display: flex; gap: 10px; }
-        .btn { padding: 10px; background: #0f0; border: none; font-weight: bold; border-radius: 5px; }
+        body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
+        #v { display: none; } /* Hidden video element */
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; display: flex; gap: 5px; }
+        .btn { padding: 12px; background: #fff; border: none; font-weight: bold; border-radius: 8px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -19,34 +18,30 @@
     <video id="v" playsinline muted></video>
     
     <div id="ui">
-        <button id="start-btn" class="btn">1. START STEREO</button>
-        <button id="load-btn" class="btn" style="display:none;">2. LOAD MODEL</button>
+        <button id="start-btn" class="btn">1. START CAMERA</button>
+        <button id="load-btn" class="btn" style="display:none;">2. LOAD .GLB</button>
         <input type="file" id="file-input" accept=".glb,.gltf" style="display:none;">
     </div>
 
     <script>
-        let scene, camera, renderer, world, model, stereo;
-        let p = new THREE.Vector3(0, 0, 0);
-        let q = new THREE.Quaternion();
+        let scene, camera, renderer, world, model, videoTexture;
+        let p = new THREE.Vector3(0, 0, 0), q = new THREE.Quaternion();
+        const eyeSep = 0.064; // Distance between eyes in meters
 
         async function init() {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1920 } } 
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
             });
             const video = document.getElementById('v');
             video.srcObject = stream;
             video.play();
 
-            // Create 2 background planes (one for each eye)
-            const videoTex = new THREE.VideoTexture(video);
-            
+            videoTexture = new THREE.VideoTexture(video);
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
             
-            // Stereo Camera Setup
-            stereo = new THREE.StereoCamera();
-            stereo.aspect = 0.5; // Each eye gets half the screen width
-
+            // Single tracking camera
+            camera = new THREE.PerspectiveCamera(60, (window.innerWidth/2) / window.innerHeight, 0.01, 1000);
+            
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
@@ -55,17 +50,19 @@
 
             world = new THREE.Group();
             scene.add(world);
-            world.add(new THREE.AmbientLight(0xffffff, 2));
+            scene.add(new THREE.AmbientLight(0xffffff, 2.5));
 
-            // Background Video Quad - Attached to camera so it moves with your head
-            const bgGeom = new THREE.PlaneGeometry(2, 2);
-            const bgMat = new THREE.MeshBasicMaterial({ map: videoTex, depthTest: false, depthWrite: false });
-            const bgMesh = new THREE.Mesh(bgGeom, bgMat);
-            bgMesh.position.z = -1; // Keep it behind the 3D model
-            camera.add(bgMesh);
-            scene.add(camera);
+            // Background Planes (Nailed to Camera)
+            const bgGeom = new THREE.PlaneGeometry(4, 2.25); // 16:9 Aspect
+            const bgMat = new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false, depthWrite: false });
+            const bgL = new THREE.Mesh(bgGeom, bgMat);
+            const bgR = bgL.clone();
+            
+            // Position them slightly apart so they align with eye-offset
+            bgL.position.set(-eyeSep/2, 0, -2);
+            bgR.position.set(eyeSep/2, 0, -2);
 
-            // Tracking sensors
+            // Device Tracking (Sensors + VIO logic)
             window.addEventListener('deviceorientation', (e) => {
                 const euler = new THREE.Euler(THREE.MathUtils.degToRad(e.beta), THREE.MathUtils.degToRad(e.alpha), -THREE.MathUtils.degToRad(e.gamma), 'YXZ');
                 q.setFromEuler(euler);
@@ -73,15 +70,16 @@
 
             window.addEventListener('devicemotion', (e) => {
                 let a = e.acceleration;
-                p.x += a.x * 0.006; 
-                p.z -= a.z * 0.006;
+                p.x += (a.x || 0) * 0.005; 
+                p.z -= (a.z || 0) * 0.005;
             });
 
-            window.addEventListener('click', () => {
+            // Tap to Anchor the model to your floor
+            window.addEventListener('touchstart', () => {
                 if (model) {
-                    const dir = new THREE.Vector3(0, 0, -3).applyQuaternion(camera.quaternion);
+                    const dir = new THREE.Vector3(0, 0, -2.5).applyQuaternion(camera.quaternion);
                     model.position.copy(camera.position).add(dir);
-                    model.position.y = -1.2;
+                    model.position.y = -1.5; 
                 }
             });
 
@@ -97,34 +95,36 @@
             new THREE.GLTFLoader().load(url, (gltf) => {
                 if(model) world.remove(model);
                 model = gltf.scene;
-                model.position.set(0, -1.2, -4);
+                model.position.set(0, -1.5, -3);
                 world.add(model);
             });
         };
 
+        function renderEye(eyeOffset, x, y, w, h) {
+            renderer.setViewport(x, y, w, h);
+            renderer.setScissor(x, y, w, h);
+            renderer.setScissorTest(true);
+
+            // Shift camera for 3D effect
+            const originalPos = camera.position.clone();
+            camera.translateX(eyeOffset);
+            renderer.render(scene, camera);
+            camera.position.copy(originalPos);
+        }
+
         function animate() {
             requestAnimationFrame(animate);
-            
-            camera.quaternion.slerp(q, 0.15);
+            camera.quaternion.slerp(q, 0.1);
             camera.position.lerp(p, 0.1);
 
-            // RENDER STEREO SBS
-            const size = new THREE.Vector2();
-            renderer.getSize(size);
+            const w = window.innerWidth;
+            const h = window.innerHeight;
 
-            stereo.update(camera);
-
-            // Left Eye
-            renderer.setViewport(0, 0, size.x / 2, size.y);
-            renderer.setScissor(0, 0, size.x / 2, size.y);
-            renderer.setScissorTest(true);
-            renderer.render(scene, stereo.cameraL);
-
-            // Right Eye
-            renderer.setViewport(size.x / 2, 0, size.x / 2, size.y);
-            renderer.setScissor(size.x / 2, 0, size.x / 2, size.y);
-            renderer.setScissorTest(true);
-            renderer.render(scene, stereo.cameraR);
+            // Render Left Eye (Left half of screen)
+            renderEye(-eyeSep/2, 0, 0, w/2, h);
+            
+            // Render Right Eye (Right half of screen)
+            renderEye(eyeSep/2, w/2, 0, w/2, h);
         }
 
         document.getElementById('start-btn').onclick = () => {
