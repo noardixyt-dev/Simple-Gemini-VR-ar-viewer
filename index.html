@@ -1,46 +1,76 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AR Floor Tracker</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body, html { 
-            margin: 0; padding: 0; width: 100vw; height: 100vh; 
-            background: #000; overflow: hidden; 
-            display: flex; justify-content: center; align-items: center;
-        }
-        .master {
-            display: flex;
-            gap: 10px;
-            transform: translateX(-10px);
-        }
-        .view {
-            width: 55mm; 
-            height: 30.94mm; /* Exact 16:9 ratio for 55mm width */
-        }
-        video { 
-            width: 100%; 
-            height: 100%; 
-            object-fit: fill; 
-            display: block; 
-        }
+        body { margin: 0; overflow: hidden; }
+        #overlay { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px; font-family: sans-serif; }
     </style>
 </head>
 <body>
-    <div class="master">
-        <div class="view"><video id="v1" autoplay playsinline muted></video></div>
-        <div class="view"><video id="v2" autoplay playsinline muted></video></div>
-    </div>
+    <div id="overlay">Point your phone at the floor and move it slowly.</div>
+    <button id="start-ar" style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); padding:15px; z-index:100;">Start AR</button>
+
     <script>
-        async function start() {
-            const s = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: { ideal: 4096 } }
+        let renderer, scene, camera, reticle;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+
+        async function init() {
+            // 1. Setup Three.js Scene
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            // 2. Build the Tracking Reticle (The "Proof" it works)
+            // This is a white ring that lies flat on the floor
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0x00ff00 }) // Green when tracking
+            );
+            reticle.visible = false; // Hidden until floor is found
+            reticle.matrixAutoUpdate = false; 
+            scene.add(reticle);
+
+            // 3. Start AR Session
+            const session = await navigator.xr.requestSession("immersive-ar", {
+                requiredFeatures: ["hit-test"]
             });
-            document.getElementById('v1').srcObject = s;
-            document.getElementById('v2').srcObject = s;
-            document.onclick = () => document.documentElement.requestFullscreen();
+            renderer.xr.setSession(session);
+
+            const referenceSpace = await session.requestReferenceSpace("local");
+            const viewerSpace = await session.requestReferenceSpace("viewer");
+            hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+            // 4. The Render Loop (The Algorithm in action)
+            renderer.setAnimationLoop((timestamp, frame) => {
+                if (frame) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+
+                    if (hitTestResults.length > 0) {
+                        const hit = hitTestResults[0];
+                        const pose = hit.getPose(referenceSpace);
+
+                        // Update Reticle position to the floor point
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(pose.transform.matrix);
+                        document.getElementById('overlay').innerText = "Floor Tracked! Points detected.";
+                    } else {
+                        reticle.visible = false;
+                        document.getElementById('overlay').innerText = "Scanning for floor...";
+                    }
+                }
+                renderer.render(scene, camera);
+            });
         }
-        start();
+
+        document.getElementById("start-ar").addEventListener("click", init);
     </script>
 </body>
 </html>
