@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Pro VR Calibration</title>
+    <title>VR Sensor-Shift Calibration</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -12,108 +12,147 @@
             font-family: sans-serif;
         }
 
-        #container { display: flex; align-items: center; justify-content: center; width: 100%; transition: transform 0.1s; }
+        #container { 
+            display: flex; align-items: center; justify-content: center; 
+            width: 100%; 
+        }
 
         .eye {
             height: 38vh; width: calc(38vh * 1.77); 
-            position: relative; overflow: hidden; border-radius: 30px; 
-            background: #000; border: 1px solid #444;
-            margin: 0 30px; /* Default Spacing */
+            position: relative; overflow: hidden; border-radius: 35px; 
+            background: #000; border: 2px solid #444;
+            margin: 0 30px; 
         }
 
         video {
             position: absolute; width: 160%; height: 160%;
             object-fit: cover; left: -30%; top: -30%;
             will-change: transform;
+            transition: none;
         }
 
-        /* VR UI Overlay */
+        /* VR INTERFACE */
         #vr-ui {
             position: fixed; inset: 0; pointer-events: none; z-index: 9999;
-            display: flex; flex-direction: column; justify-content: space-between;
+            display: none; flex-direction: column; justify-content: space-between;
         }
 
         .btn {
-            pointer-events: auto; background: rgba(255,255,255,0.15);
-            color: white; border: 1px solid rgba(255,255,255,0.3);
-            padding: 20px; border-radius: 10px; font-size: 14px;
+            pointer-events: auto; 
+            background: rgba(0, 0, 0, 0.8);
+            color: white; border: 2px solid rgba(255, 255, 255, 0.4);
+            padding: 30px; border-radius: 20px; font-size: 20px; font-weight: bold;
         }
 
-        #top-bar { display: flex; justify-content: center; padding: 10px; }
-        #mid-bar { display: flex; justify-content: space-between; align-items: center; padding: 0 20px; flex-grow: 1; }
-        #stats { color: #0f0; font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px; }
+        #top-bar { display: flex; justify-content: center; padding: 20px; }
+        
+        #mid-bar { 
+            display: flex; justify-content: space-between; align-items: center; 
+            padding: 0 40px; flex-grow: 1; 
+        }
+
+        #stats-panel {
+            background: rgba(0, 0, 0, 0.9);
+            color: #00ff00; padding: 15px; border-radius: 12px;
+            border: 2px solid #00ff00; text-align: center;
+            font-family: monospace; font-size: 18px; pointer-events: auto;
+        }
+
+        #start-overlay {
+            position: fixed; inset: 0; background: #000; z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        }
     </style>
 </head>
 <body>
 
-    <button id="start-btn" style="position:fixed; z-index:10000; padding: 20px;" onclick="init()">START VR</button>
+    <div id="start-overlay">
+        <button class="btn" style="background: #1a73e8;" onclick="start()">ENTER CALIBRATION</button>
+    </div>
 
-    <div id="vr-ui" style="display:none;">
+    <div id="vr-ui">
         <div id="top-bar">
-            <button class="btn" onclick="cycleMode()">MODE: <span id="mode-name">SPACING</span></button>
+            <button class="btn" onclick="cycleMode()">MODE: <span id="mode-label">SPACING</span></button>
         </div>
+
         <div id="mid-bar">
-            <button class="btn" onclick="adjust(-1)">MINUS (-)</button>
-            <div id="stats">S:30 | V:0 | H:38</div>
-            <button class="btn" onclick="adjust(1)">PLUS (+)</button>
+            <button class="btn" onclick="adjust(-1)">MINUS [-]</button>
+            
+            <div id="stats-panel">
+                <div id="stats-text">S:30 | V:0 | H:38</div>
+            </div>
+
+            <button class="btn" onclick="adjust(1)">PLUS [+]</button>
         </div>
     </div>
 
     <div id="container">
-        <div class="eye" id="left-eye"><video id="v1" autoplay playsinline muted></video></div>
-        <div class="eye" id="right-eye"><video id="v2" autoplay playsinline muted></video></div>
+        <div class="eye" id="l-eye"><video id="v1" autoplay playsinline muted></video></div>
+        <div class="eye" id="r-eye"><video id="v2" autoplay playsinline muted></video></div>
     </div>
 
     <script>
-        let spacing = 30;  // margin
-        let vertical = 0; // translateY
-        let scale = 38;    // vh
-        let currentMode = 0; // 0: Spacing, 1: Vertical, 2: Scale
-        const modes = ["SPACING", "VERTICAL", "SCALE"];
-        
+        // Configuration State
+        let s = 30; // Spacing
+        let v = 0;  // Vertical
+        let h = 38; // Height/Scale
+        let mode = 0; // 0:S, 1:V, 2:H
+        const modes = ["SPACING", "VERTICAL", "HEIGHT"];
+
         const vids = document.querySelectorAll('video');
         const container = document.getElementById('container');
-        const eyes = document.querySelectorAll('.eye');
+        const lEye = document.getElementById('l-eye');
+        const rEye = document.getElementById('r-eye');
 
         function cycleMode() {
-            currentMode = (currentMode + 1) % 3;
-            document.getElementById('mode-name').innerText = modes[currentMode];
+            mode = (mode + 1) % 3;
+            document.getElementById('mode-label').innerText = modes[mode];
         }
 
         function adjust(dir) {
-            if (currentMode === 0) spacing += (dir * 2);
-            if (currentMode === 1) vertical += (dir * 5);
-            if (currentMode === 2) scale += (dir * 1);
+            if (mode === 0) s += (dir * 2);
+            if (mode === 1) v += (dir * 4);
+            if (mode === 2) h += (dir * 1);
 
-            // Apply updates
-            eyes[0].style.marginRight = spacing + "px";
-            eyes[1].style.marginLeft = spacing + "px";
-            container.style.transform = `translateY(${vertical}px)`;
-            eyes.forEach(e => {
-                e.style.height = scale + "vh";
-                e.style.width = `calc(${scale}vh * 1.77)`;
+            // Update DOM
+            lEye.style.marginRight = s + "px";
+            rEye.style.marginLeft = s + "px";
+            container.style.transform = `translateY(${v}px)`;
+            document.querySelectorAll('.eye').forEach(el => {
+                el.style.height = h + "vh";
+                el.style.width = `calc(${h}vh * 1.77)`;
             });
 
-            document.getElementById('stats').innerText = `S:${spacing} | V:${vertical} | H:${scale}`;
+            document.getElementById('stats-text').innerText = `S:${s} | V:${v} | H:${h}`;
         }
 
-        async function init() {
-            document.getElementById('start-btn').style.display = 'none';
+        async function start() {
+            document.getElementById('start-overlay').style.display = 'none';
             document.getElementById('vr-ui').style.display = 'flex';
-            document.documentElement.requestFullscreen();
+            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
 
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: 1920, height: 1080, frameRate: 60 }
-            });
-            vids.forEach(v => v.srcObject = stream);
-
-            window.addEventListener('devicemotion', (event) => {
-                const x = event.accelerationIncludingGravity.x || 0;
-                const y = event.accelerationIncludingGravity.y || 0;
-                const mult = 6.0; 
-                vids.forEach(v => {
-                    v.style.transform = `translate(${x * mult}px, ${(y - 5) * mult}px)`;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: 1920, height: 1080, frameRate: 60 }
                 });
+                vids.forEach(vid => vid.srcObject = stream);
+            } catch (err) { alert("Camera Error"); }
+
+            // Initialize Sensor-Shift Logic
+            if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission().then(state => {
+                    if (state === 'granted') window.addEventListener('devicemotion', handleMotion);
+                });
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+            }
+        }
+
+        function handleMotion(e) {
+            const x = (e.accelerationIncludingGravity.x || 0) * 6.5;
+            const y = ((e.accelerationIncludingGravity.y || 0) - 5) * 6.5;
+            vids.forEach(vid => {
+                vid.style.transform = `translate(${x}px, ${y}px)`;
             });
         }
     </script>
