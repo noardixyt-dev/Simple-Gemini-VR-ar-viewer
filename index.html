@@ -2,130 +2,115 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SBS VR Passthrough</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>VR Passthrough</title>
     <style>
         body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: black;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-family: sans-serif;
-        }
-
-        /* Landscape Check */
-        @media screen and (orientation: portrait) {
-            #warning { display: flex; }
-            #container, #fullscreenBtn { display: none; }
-        }
-
-        #warning {
-            display: none;
-            text-align: center;
-            padding: 20px;
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            background: black; overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
         }
 
         #container {
             display: flex;
-            width: 100vw;
-            height: 100vh;
-            background: black;
+            width: 100vw; height: 100vh;
         }
 
         .eye {
             flex: 1;
             position: relative;
             overflow: hidden;
-            border-radius: 50px; /* YouTube VR Style */
-            margin: 15px;
-            background: #000;
+            border-radius: 40px; /* Rounded corners */
+            margin: 10px;
+            background: #111;
         }
 
         video {
             position: absolute;
-            height: 100%;
-            width: 100%;
+            width: 100%; height: 100%;
             object-fit: cover;
-            left: 50%;
-            top: 50%;
+            left: 50%; top: 50%;
             transform: translate(-50%, -50%);
         }
 
-        /* Small Fullscreen Toggle */
-        #fullscreenBtn {
+        /* Highly Visible Toggle Button */
+        #fsToggle {
             position: fixed;
-            top: 10px;
-            right: 10px;
-            width: 30px;
-            height: 30px;
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.4);
-            border-radius: 5px;
-            z-index: 100;
-            cursor: pointer;
+            top: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            background: red; /* Bright color to find it easily */
+            color: white;
+            border: none;
+            border-radius: 50%;
+            z-index: 9999;
             display: flex;
-            align-items: center;
             justify-content: center;
-            font-size: 12px;
-            opacity: 0.5;
+            align-items: center;
+            font-weight: bold;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
         }
 
-        #fullscreenBtn:active {
-            background: rgba(255, 255, 255, 0.5);
+        /* Hide everything if in portrait */
+        @media screen and (orientation: portrait) {
+            #container, #fsToggle { display: none; }
+            body::after {
+                content: "Rotate to Landscape";
+                color: white;
+                font-family: sans-serif;
+            }
         }
     </style>
 </head>
 <body>
 
-    <div id="warning">Please rotate to Landscape</div>
-
-    <div id="fullscreenBtn" onclick="toggleFullscreen()">⛶</div>
+    <button id="fsToggle">GO</button>
 
     <div id="container">
-        <div class="eye"><video id="leftEye" autoplay playsinline muted></video></div>
-        <div class="eye"><video id="rightEye" autoplay playsinline muted></video></div>
+        <div class="eye"><video id="v1" autoplay playsinline muted></video></div>
+        <div class="eye"><video id="v2" autoplay playsinline muted></video></div>
     </div>
 
     <script>
-        // Camera Setup
-        async function startCamera() {
-            const constraints = {
-                video: {
-                    facingMode: "environment",
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                }
-            };
+        const btn = document.getElementById('fsToggle');
+        const v1 = document.getElementById('v1');
+        const v2 = document.getElementById('v2');
 
+        // Camera Access
+        async function init() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                document.getElementById('leftEye').srcObject = stream;
-                document.getElementById('rightEye').srcObject = stream;
-            } catch (err) {
-                alert("Camera error: " + err.name);
-            }
-        }
-
-        // Fullscreen Logic
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    alert(`Error attempting to enable fullscreen: ${err.message}`);
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: 1280, height: 720 }
                 });
-            } else {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                }
+                v1.srcObject = stream;
+                v2.srcObject = stream;
+            } catch (e) {
+                alert("Camera failed: " + e.message);
             }
         }
 
-        startCamera();
+        // Robust Fullscreen Toggle
+        btn.addEventListener('click', () => {
+            const doc = window.document;
+            const docEl = doc.documentElement;
+
+            const requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
+            const cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+
+            if (!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+                requestFullScreen.call(docEl);
+                btn.style.opacity = "0.2"; // Fade out when active
+                btn.innerText = "X";
+            } else {
+                cancelFullScreen.call(doc);
+                btn.style.opacity = "1";
+                btn.innerText = "GO";
+            }
+        });
+
+        init();
     </script>
 </body>
 </html>
