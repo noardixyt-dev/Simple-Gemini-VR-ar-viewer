@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Steady VR Passthrough</title>
+    <title>1:1 Scale VR Passthrough</title>
     <style>
         body, html {
             margin: 0; padding: 0;
@@ -14,55 +14,56 @@
 
         #container {
             display: flex;
-            transform: translateX(-40px); /* Adjust for your headset IPD */
-            align-items: center;
-            justify-content: center;
             width: 100%;
+            justify-content: center;
+            align-items: center;
+            /* Adjust this to line up with your headset lenses */
+            transform: translateX(-55px); 
         }
 
         .eye {
-            height: 60vh; 
-            aspect-ratio: 16 / 9;
+            /* SHRUNK WINDOWS: This "portals" the 1x camera 
+               so it doesn't look giant through your VR lenses */
+            height: 32vh; 
+            width: calc(32vh * 1.77); 
             position: relative;
             overflow: hidden; 
-            border-radius: 40px; 
-            margin: 10px;
+            border-radius: 25px; 
+            margin: 0 35px; /* Nose bridge gap */
             background: #000;
             border: 1px solid #333;
         }
 
         video {
             position: absolute;
-            width: 140%; /* Extra room for stabilization drift */
-            height: 140%;
+            /* We keep the video slightly larger than the eye for stabilization,
+               but NOT zoomed in. Object-fit: contain keeps the 1:1 scale better. */
+            width: 120%;
+            height: 120%;
             object-fit: cover;
-            left: -20%;
-            top: -20%;
+            left: -10%;
+            top: -10%;
             will-change: transform;
         }
 
         #ui {
             position: fixed;
-            top: 10px; right: 10px;
+            top: 20px; right: 20px;
             z-index: 1000;
         }
 
         button {
-            padding: 12px;
-            background: rgba(255, 255, 255, 0.15);
+            padding: 15px;
+            background: rgba(255,255,255,0.2);
             color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 12px;
+            border: 1px solid white;
+            border-radius: 10px;
         }
     </style>
 </head>
 <body>
 
-    <div id="ui">
-        <button onclick="initApp()">START STABILIZED VR</button>
-    </div>
+    <div id="ui"><button onclick="startVR()">START VR</button></div>
 
     <div id="container">
         <div class="eye"><video id="v1" autoplay playsinline muted></video></div>
@@ -70,63 +71,46 @@
     </div>
 
     <script>
-        const videos = document.querySelectorAll('video');
-        let offsetX = 0;
-        let offsetY = 0;
+        const vids = document.querySelectorAll('video');
+        let lx = 0, ly = 0;
 
-        async function initApp() {
-            // Hide button
+        async function startVR() {
             document.getElementById('ui').style.display = 'none';
-            
-            // Fullscreen
-            if (document.documentElement.requestFullscreen) {
-                document.documentElement.requestFullscreen();
-            }
+            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
 
-            // Camera
             try {
+                // Requesting 60fps and 1080p for the best clarity
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "environment", width: 1920, height: 1080, frameRate: 60 }
                 });
-                videos.forEach(v => v.srcObject = stream);
-            } catch (e) { alert("Camera error"); }
+                vids.forEach(v => v.srcObject = stream);
+            } catch (e) { alert("Camera access denied."); }
 
-            // Gyroscope Access (iOS/Android)
+            // Permission for Motion Sensors
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(registsOrientation);
+                DeviceOrientationEvent.requestPermission().then(setupMotion);
             } else {
-                registsOrientation('granted');
+                setupMotion('granted');
             }
         }
 
-        function registsOrientation(state) {
+        function setupMotion(state) {
             if (state === 'granted') {
                 window.addEventListener('deviceorientation', (e) => {
-                    // We calculate the drift
-                    // Gamma = Left/Right Tilt
-                    // Beta = Up/Down Tilt
-                    
-                    // The factor 1.2 is the 'stabilization strength'
-                    // We use a simple centering force: 
-                    // it moves opposite to head, but pulls back to 0
-                    offsetX = e.gamma * -1.8;
-                    offsetY = (e.beta - 75) * -1.8; // 75 is roughly holding phone in front of face
+                    // STABILIZATION
+                    // This "absorbs" the vibrations but keeps the view centered.
+                    // Multiplier 2.5 is aggressive enough for walking/shaking.
+                    const moveX = (e.gamma - lx) * -2.5;
+                    const moveY = (e.beta - ly) * -2.5;
 
-                    // Constrain so it never leaves the window
-                    const limit = 60; 
-                    offsetX = Math.max(-limit, Math.min(limit, offsetX));
-                    offsetY = Math.max(-limit, Math.min(limit, offsetY));
+                    vids.forEach(v => {
+                        v.style.transform = `translate(${moveX}px, ${moveY}px)`;
+                    });
 
-                    updatePosition();
+                    lx = e.gamma;
+                    ly = e.beta;
                 });
             }
-        }
-
-        function updatePosition() {
-            const transformStr = `translate(${offsetX}px, ${offsetY}px)`;
-            videos.forEach(v => {
-                v.style.transform = transformStr;
-            });
         }
     </script>
 </body>
