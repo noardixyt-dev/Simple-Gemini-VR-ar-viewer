@@ -3,143 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6DoF World-Positioning Engine</title>
+    <title>6DoF Tap-to-Place Pro</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; color: #fff; }
-        #ui { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.75); padding: 12px; border-radius: 8px; font-size: 11px; z-index: 10; border: 1px solid #0f0; pointer-events: none; line-height: 1.5; }
-        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 12px; width: 85%; max-width: 320px; z-index: 20; }
-        .btn { padding: 18px; background: #0f0; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 14px; text-transform: uppercase; font-size: 13px; box-shadow: 0 4px 15px rgba(0,255,0,0.3); }
-        #reset-btn { background: #fff; color: #000; display: none; }
-        #file-input { display: none; }
-        /* Video stays behind 3D world */
-        #video-background { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: -1; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #video-feed { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
+        #ui { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.8); padding: 12px; border-radius: 10px; font-size: 11px; z-index: 10; border: 1px solid #0f0; color: #0f0; pointer-events: none; }
+        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; width: 85%; max-width: 320px; z-index: 20; }
+        .btn { padding: 18px; background: #0f0; color: #000; border: none; font-weight: bold; border-radius: 14px; cursor: pointer; text-transform: uppercase; }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
+    <video id="video-feed" playsinline muted></video>
     <div id="ui">
-        <b>SYSTEM STATUS</b><br>
-        6DoF: <span id="stat-6dof">OFFLINE</span><br>
-        POSITION: <span id="stat-pos">0, 0, 0</span><br>
-        MODEL: <span id="stat-model">NONE</span>
+        <b>SYSTEM:</b> <span id="sys">OFFLINE</span><br>
+        <b>LOCK:</b> <span id="lock">NONE</span><br>
+        <i>Tap screen to move object</i>
     </div>
 
     <div id="controls">
-        <button id="start-btn" class="btn">1. Calibrate & Start AR</button>
-        <button id="pick-btn" class="btn" style="display:none;">2. Load .GLB Model</button>
-        <button id="reset-btn" class="btn">Reset Origin</button>
-        <input type="file" id="file-input" accept=".glb,.gltf">
+        <button id="start-btn" class="btn">1. Start 6DoF Passthrough</button>
+        <button id="load-btn" class="btn" style="display:none;">2. Load .GLB Model</button>
+        <input type="file" id="file-picker" accept=".glb,.gltf">
     </div>
 
-    <video id="video-background" playsinline></video>
-
     <script>
-        let scene, camera, renderer, model, mixer;
+        let scene, camera, renderer, worldSpace, model, raycaster, pointer;
         let pos = new THREE.Vector3(0, 0, 0);
-        let orient = new THREE.Quaternion();
-        const clock = new THREE.Clock();
+        let orientation = new THREE.Quaternion();
 
-        async function startAR() {
-            // 1. High-Res Camera Request (Fixed Aspect Ratio)
-            const video = document.getElementById('video-background');
+        async function init() {
+            const video = document.getElementById('video-feed');
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 4096 }, height: { ideal: 2160 } } 
+                video: { facingMode: "environment", width: { ideal: 4096 } } 
             });
             video.srcObject = stream;
             await video.play();
 
-            // 2. Three.js Initialization
+            // 3D Engine Initialization
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
-            
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // Lighting for Realistic Models
-            scene.add(new THREE.AmbientLight(0xffffff, 1));
-            const sun = new THREE.DirectionalLight(0xffffff, 1);
-            sun.position.set(5, 10, 7);
-            scene.add(sun);
+            // Spatial World Setup
+            worldSpace = new THREE.Group();
+            scene.add(worldSpace);
+            worldSpace.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-            // 3. Sensor Fusion (Inertial Odometry)
+            // Raycaster for Tapping
+            raycaster = new THREE.Raycaster();
+            pointer = new THREE.Vector2();
+
+            // Sensor Fusion (6DoF)
             window.addEventListener('deviceorientation', (e) => {
-                const alpha = THREE.MathUtils.degToRad(e.alpha);
-                const beta = THREE.MathUtils.degToRad(e.beta);
-                const gamma = THREE.MathUtils.degToRad(e.gamma);
-                
-                // Construct orientation (Z-X-Y order for phone tracking)
-                const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-                orient.setFromEuler(euler);
-                document.getElementById('stat-6dof').innerText = "LOCKED";
+                const euler = new THREE.Euler(THREE.MathUtils.degToRad(e.beta), THREE.MathUtils.degToRad(e.alpha), -THREE.MathUtils.degToRad(e.gamma), 'YXZ');
+                orientation.setFromEuler(euler);
+                document.getElementById('lock').innerText = "WORLD ANCHOR ACTIVE";
             });
 
             window.addEventListener('devicemotion', (e) => {
-                let acc = e.acceleration;
-                // Simple motion integration for translation
-                if(Math.abs(acc.x) > 0.1) pos.x += acc.x * 0.005;
-                if(Math.abs(acc.z) > 0.1) pos.z -= acc.z * 0.005;
-                
-                document.getElementById('stat-pos').innerText = 
-                    `${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}`;
+                let a = e.acceleration;
+                pos.x += a.x * 0.005; pos.z -= a.z * 0.005;
+                document.getElementById('sys').innerText = "TRACKING SPACE";
             });
 
+            // Tap-to-Place Event
+            window.addEventListener('click', onTouch);
+
             document.getElementById('start-btn').style.display = 'none';
-            document.getElementById('pick-btn').style.display = 'block';
-            document.getElementById('reset-btn').style.display = 'block';
-            
+            document.getElementById('load-btn').style.display = 'block';
             animate();
         }
 
-        // 4. File Picker & Loader
-        const fileInput = document.getElementById('file-input');
-        document.getElementById('pick-btn').onclick = () => fileInput.click();
+        function onTouch(event) {
+            if (!model) return;
+            // Calculate tap position
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-        fileInput.onchange = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const url = URL.createObjectURL(file);
-            const loader = new THREE.GLTFLoader();
+            // Shoot a ray 3 meters deep into your room
+            raycaster.setFromCamera(pointer, camera);
+            const targetPos = new THREE.Vector3();
+            raycaster.ray.at(3, targetPos); 
             
-            if(model) scene.remove(model);
+            // Move the model to the tapped spot
+            model.position.copy(targetPos);
+        }
 
-            loader.load(url, (gltf) => {
+        // File Loading
+        const filePicker = document.getElementById('file-picker');
+        document.getElementById('load-btn').onclick = () => filePicker.click();
+        filePicker.onchange = (e) => {
+            const url = URL.createObjectURL(e.target.files[0]);
+            new THREE.GLTFLoader().load(url, (gltf) => {
+                if(model) worldSpace.remove(model);
                 model = gltf.scene;
-                // Place 2 meters in front of the camera
-                model.position.set(pos.x, -1.5, pos.z - 2); 
-                scene.add(model);
-                document.getElementById('stat-model').innerText = file.name;
+                model.position.set(0, 0, -3); // Default placement
+                worldSpace.add(model);
             });
-        };
-
-        // Reset tracking origin
-        document.getElementById('reset-btn').onclick = () => {
-            pos.set(0, 0, 0);
-            if(model) model.position.set(0, -1.5, -2);
         };
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-            
-            // Apply 6DoF values to Camera
-            camera.quaternion.copy(orient);
-            camera.position.lerp(pos, 0.1); // Linear interpolation for smoothness
-
-            if (mixer) mixer.update(delta);
+            camera.quaternion.copy(orientation);
+            camera.position.lerp(pos, 0.1); 
             renderer.render(scene, camera);
         }
 
         document.getElementById('start-btn').onclick = () => {
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(startAR);
-            } else {
-                startAR();
-            }
+                DeviceOrientationEvent.requestPermission().then(init);
+            } else { init(); }
         };
     </script>
 </body>
