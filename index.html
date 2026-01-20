@@ -1,68 +1,64 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Instant AR Ground Tracker</title>
+    <title>Pro AR Ground Lock</title>
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <style>
-        body { margin: 0; font-family: sans-serif; background: #111; color: white; display: flex; flex-direction: column; height: 100vh; }
-        model-viewer { width: 100%; height: 70%; background-color: #222; }
-        .ui { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-        .btn { 
-            padding: 15px; border-radius: 12px; border: none; font-weight: bold; 
-            text-transform: uppercase; cursor: pointer; font-size: 16px;
-        }
-        #pick-btn { background: #333; color: white; border: 1px solid #555; }
-        #ar-button { 
-            background: #00ff00; color: black; display: none; 
-            box-shadow: 0 0 20px rgba(0,255,0,0.3);
-        }
-        #instructions { font-size: 12px; color: #888; text-align: center; }
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        model-viewer { width: 100%; flex-grow: 1; }
+        .controls { padding: 20px; background: #111; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #333; }
+        .btn { width: 100%; padding: 20px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; font-size: 16px; }
+        #pick-btn { background: #444; color: white; }
+        #ar-btn { background: #00ff00; color: #000; display: none; }
+        #msg { text-align: center; font-size: 12px; color: #888; margin-top: 5px; }
     </style>
 </head>
 <body>
 
-    <model-viewer id="viewer" 
-                  ar 
-                  ar-modes="scene-viewer quick-look" 
-                  camera-controls 
-                  touch-action="pan-y" 
-                  shadow-intensity="1" 
-                  ar-placement="floor">
+    <model-viewer id="mv" 
+        ar 
+        ar-modes="webxr scene-viewer quick-look" 
+        ar-placement="floor" 
+        camera-controls 
+        shadow-intensity="1" 
+        environment-image="neutral"
+        touch-action="pan-y">
         
-        <button slot="ar-button" id="ar-button" class="btn">
-            ✨ Place in your room
-        </button>
+        <div id="ar-prompt" slot="ar-button" style="display:none;"></div>
     </model-viewer>
 
-    <div class="ui">
-        <button id="pick-btn" class="btn">📂 Pick 3D Model (.glb)</button>
+    <div class="controls">
+        <button id="pick-btn" class="btn">📂 1. SELECT DOWNLOADED .GLB</button>
+        <button id="ar-btn" class="btn">🚀 2. PIN TO FLOOR</button>
         <input type="file" id="file-input" accept=".glb,.gltf" style="display: none;">
-        
-        <div id="instructions">
-            Select a GLB from your downloads, then tap "Place in your room."
-        </div>
+        <div id="msg">Model must be under 15MB for best tracking</div>
     </div>
 
     <script>
-        const modelViewer = document.querySelector('#viewer');
-        const fileInput = document.querySelector('#file-input');
+        const mv = document.querySelector('#mv');
+        const fileIn = document.querySelector('#file-input');
+        const arBtn = document.querySelector('#ar-btn');
         const pickBtn = document.querySelector('#pick-btn');
-        const arBtn = document.querySelector('#ar-button');
 
-        // Allow user to pick a model from their phone
-        pickBtn.onclick = () => fileInput.click();
+        pickBtn.onclick = () => fileIn.click();
 
-        fileInput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
+        fileIn.onchange = (e) => {
+            const file = e.target.files[0];
             if (file) {
                 const url = URL.createObjectURL(file);
-                modelViewer.src = url; // Load into the 3D viewer
-                arBtn.style.display = 'block'; // Show the AR button
-                pickBtn.innerText = "Model Loaded ✅";
+                mv.src = url;
+                arBtn.style.display = 'block';
+                pickBtn.innerText = "MODEL LOADED ✅";
             }
-        });
+        };
+
+        // This triggers the phone's native AR hardware
+        arBtn.onclick = () => {
+            mv.activateAR();
+        };
     </script>
 </body>
 </html>
+w
