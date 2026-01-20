@@ -1,113 +1,101 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Custom SLAM Anchor</title>
+    <title>SLAM World Anchor (No WebXR)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/alanross/AlvaAR/dist/alva_ar.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
         #v { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #0f0; font-family: monospace; z-index: 10; background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid #0f0; }
-        .btn-container { position: fixed; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 10px; }
-        .btn { padding: 15px 25px; background: #0f0; border: none; font-weight: bold; border-radius: 8px; cursor: pointer; }
-        #file-input { display: none; }
+        #ui { position: absolute; top: 15px; left: 15px; color: #0f0; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; font-family: monospace; z-index: 10; border: 1px solid #0f0; }
+        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 20; }
+        .btn { padding: 15px 20px; background: #0f0; border: none; font-weight: bold; border-radius: 8px; cursor: pointer; }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
-<video id="v" playsinline muted></video>
-<div id="ui">TRACKING: <span id="status">INITIALIZING...</span></div>
+    <video id="v" playsinline muted></video>
+    <div id="ui">SYSTEM: <span id="stat">SCANNING ROOM...</span></div>
 
-<div class="btn-container">
-    <button id="start-btn" class="btn">1. START TRACKER</button>
-    <button id="load-btn" class="btn" style="display:none;">2. CHOOSE .GLB</button>
-    <input type="file" id="file-input" accept=".glb,.gltf">
-</div>
+    <div id="controls">
+        <button id="start-btn" class="btn">1. INITIALIZE SLAM</button>
+        <button id="load-btn" class="btn" style="display:none;">2. LOAD MODEL</button>
+        <input type="file" id="file-input" accept=".glb,.gltf">
+    </div>
 
-<script>
-let scene, camera, renderer, world, model;
-let video = document.getElementById('v');
+    <script type="module">
+        let scene, camera, renderer, model, alva;
+        const video = document.getElementById('v');
 
-// --- THE TRACKING ENGINE (Custom VIO Logic) ---
-let frameData = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
+        async function init() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+            });
+            video.srcObject = stream;
+            await video.play();
 
-async function startTracking() {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "environment", width: { ideal: 1280 } } 
-    });
-    video.srcObject = stream;
-    video.play();
+            // Setup AlvaAR (The SLAM Brain)
+            // It tracks the camera feed and outputs a 4x4 Pose Matrix
+            alva = await AlvaAR.Initialize(video.videoWidth, video.videoHeight);
+            
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, video.videoWidth / video.videoHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
 
-    scene = new THREE.Scene();
-    // FOV 65 matches most phone lenses to stop the "sliding" look
-    camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    document.body.appendChild(renderer.domElement);
+            scene.add(new THREE.AmbientLight(0xffffff, 2));
 
-    // This is our "Room" container. It stays still.
-    world = new THREE.Group();
-    scene.add(world);
-    world.add(new THREE.AmbientLight(0xffffff, 2));
+            document.getElementById('start-btn').style.display = 'none';
+            document.getElementById('load-btn').style.display = 'block';
+            
+            // TAP TO PLACE: Anchor the model to the detected floor
+            window.addEventListener('click', () => {
+                if (model) {
+                    const pose = alva.getPose(); // Get current SLAM coordinate
+                    if (pose) {
+                        model.matrix.fromArray(pose);
+                        model.matrixAutoUpdate = false; // LOCK IT TO THE WORLD
+                        document.getElementById('stat').innerText = "ANCHORED TO WORLD";
+                    }
+                }
+            });
 
-    // Custom Sensor Fusion (VIO Simulation)
-    // This replaces WebXR's internal engine
-    window.addEventListener('deviceorientation', (e) => {
-        frameData.pitch = THREE.MathUtils.degToRad(e.beta);
-        frameData.yaw = THREE.MathUtils.degToRad(e.alpha);
-        frameData.roll = -THREE.MathUtils.degToRad(e.gamma);
-        document.getElementById('status').innerText = "STABLE";
-    });
+            loop();
+        }
 
-    window.addEventListener('devicemotion', (e) => {
-        // High-pass filter to remove sensor gravity/noise
-        let acc = e.acceleration;
-        frameData.x += acc.x * 0.005; 
-        frameData.z -= acc.z * 0.005;
-    });
+        const fileInput = document.getElementById('file-input');
+        document.getElementById('load-btn').onclick = () => fileInput.click();
+        fileInput.onchange = (e) => {
+            const url = URL.createObjectURL(e.target.files[0]);
+            new THREE.GLTFLoader().load(url, (gltf) => {
+                if(model) scene.remove(model);
+                model = gltf.scene;
+                scene.add(model);
+            });
+        };
 
-    // TAP TO RELOCATE (Just like Quest menus)
-    window.addEventListener('click', (e) => {
-        if (!model) return;
-        // Project a point 2 meters in front of the camera
-        const vector = new THREE.Vector3(0, 0, -2);
-        vector.applyQuaternion(camera.quaternion);
-        model.position.copy(camera.position).add(vector);
-        // Lock to "Floor/Table Height"
-        model.position.y = -1.2; 
-    });
+        function loop() {
+            requestAnimationFrame(loop);
+            
+            // Every frame, AlvaAR finds the phone's position based on visual landmarks
+            const pose = alva.findCameraPose(video);
+            
+            if (pose) {
+                // Update camera to match your physical head position
+                camera.matrixWorldInverse.fromArray(pose);
+                camera.matrixWorld.getInverse(camera.matrixWorldInverse);
+                document.getElementById('stat').innerText = "TRACKING: SOLID";
+            } else {
+                document.getElementById('stat').innerText = "TRACKING: LOST (MOVE SLOWLY)";
+            }
 
-    document.getElementById('start-btn').style.display = 'none';
-    document.getElementById('load-btn').style.display = 'block';
-    animate();
-}
+            renderer.render(scene, camera);
+        }
 
-// .GLB Loader
-const fileInput = document.getElementById('file-input');
-document.getElementById('load-btn').onclick = () => fileInput.click();
-fileInput.onchange = (e) => {
-    const url = URL.createObjectURL(e.target.files[0]);
-    new THREE.GLTFLoader().load(url, (gltf) => {
-        if(model) world.remove(model);
-        model = gltf.scene;
-        model.position.set(0, -1.2, -3); // Drop at origin
-        world.add(model);
-    });
-};
-
-function animate() {
-    requestAnimationFrame(animate);
-
-    // Update Camera (Phone) Relative to the Static World
-    const euler = new THREE.Euler(frameData.pitch, frameData.yaw, frameData.roll, 'YXZ');
-    camera.quaternion.setFromEuler(euler);
-    camera.position.set(frameData.x, 0, frameData.z);
-
-    renderer.render(scene, camera);
-}
-
-document.getElementById('start-btn').onclick = startTracking;
-</script>
+        document.getElementById('start-btn').onclick = init;
+    </script>
 </body>
 </html>
