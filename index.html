@@ -1,52 +1,99 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://unpkg.com/aframe-ar-hit-test-component@1.0.0/dist/aframe-ar-hit-test-component.min.js"></script>
-  </head>
-  <body style="margin: 0; overflow: hidden;">
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SBS VR Passthrough</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: black;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
 
-    <a-scene 
-      webxr="optionalFeatures: hit-test, local-floor; referenceSpaceType: local-floor;"
-      renderer="antialias: true; alpha: true;">
-      
-      <a-assets>
-        <a-asset-item id="myModel" src="https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb"></a-asset-item>
-      </a-assets>
+        /* Landscape Check */
+        @media screen and (orientation: portrait) {
+            #warning { display: flex; }
+            #container { display: none; }
+        }
 
-      <a-entity id="cameraRig">
-        <a-camera position="0 1.6 0"></a-camera>
-      </a-entity>
+        #warning {
+            display: none;
+            color: white;
+            text-align: center;
+            font-family: sans-serif;
+            padding: 20px;
+        }
 
-      <a-entity ar-hit-test="target: #model-anchor; type: footprint;">
-        <a-ring color="#00FF00" rotation="-90 0 0" radius-inner="0.1" radius-outer="0.15"></a-ring>
-      </a-entity>
+        #container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            gap: 10px; /* Slight separation between eyes */
+        }
 
-      <a-entity id="model-anchor" position="0 0 -1" visible="false">
-        <a-entity 
-          gltf-model="#myModel" 
-          scale="0.5 0.5 0.5"
-          animation="property: rotation; to: 0 360 0; loop: true; dur: 10000">
-        </a-entity>
-      </a-entity>
+        .eye {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            border-radius: 40px; /* The rounded "YouTube VR" look */
+            background: #000;
+            margin: 10px;
+        }
 
-      <a-light type="ambient" intensity="0.5"></a-light>
-      <a-light type="directional" position="1 1 1"></a-light>
-    </a-scene>
+        video {
+            position: absolute;
+            height: 100%;
+            width: 100%;
+            object-fit: cover;
+            /* Center the feed within the eye */
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="warning">Please rotate your device to Landscape mode.</div>
+
+    <div id="container">
+        <div class="eye"><video id="leftEye" autoplay playsinline muted></video></div>
+        <div class="eye"><video id="rightEye" autoplay playsinline muted></video></div>
+    </div>
 
     <script>
-      // Logic to make the model stay visible once placed
-      const reticle = document.querySelector('[ar-hit-test]');
-      const model = document.querySelector('#model-anchor');
+        async function startCamera() {
+            const constraints = {
+                video: {
+                    facingMode: "environment", // Use back camera
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: false
+            };
 
-      window.addEventListener('click', () => {
-        if (reticle.getAttribute('visible') !== false) {
-          model.setAttribute('visible', 'true');
-          // Copy reticle position to model for "anchoring"
-          model.setAttribute('position', reticle.getAttribute('position'));
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                const leftVideo = document.getElementById('leftEye');
+                const rightVideo = document.getElementById('rightEye');
+                
+                leftVideo.srcObject = stream;
+                rightVideo.srcObject = stream;
+            } catch (err) {
+                console.error("Error accessing camera: ", err);
+                alert("Camera access denied or not available.");
+            }
         }
-      });
+
+        // Initialize
+        startCamera();
     </script>
-  </body>
+</body>
 </html>
-a
