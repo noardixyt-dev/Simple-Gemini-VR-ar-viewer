@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>0.5x Ultra-Wide 6DoF SBS Engine</title>
+    <title>0.5x Ultra-Wide Production VIO Engine</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -13,21 +13,21 @@
         #container {
             display: flex; align-items: center; justify-content: center;
             width: 100%; height: 100%;
-            transform: translate(-5px, 10px); /* Hardcoded layout calibration offsets */
+            transform: translate(-5px, 10px); /* Custom lens physical calibration */
         }
         .eye {
             height: 45vh;
             width: calc(45vh * 1.77);
             position: relative; overflow: hidden; border-radius: 40px;
-            background: #000;
-            margin: 0 24px; /* S:24 spacing */
+            background: #111; /* Slight dark gray placeholder to prove canvas visibility */
+            margin: 0 24px; /* S:24 lens gap */
             border: 1px solid #222;
         }
         video {
             position: absolute;
-            width: 130%; height: 130%;
+            width: 140%; height: 140%;
             object-fit: cover;
-            left: -15%; top: -15%;
+            left: -20%; top: -20%;
             will-change: transform;
             z-index: 1;
         }
@@ -44,10 +44,12 @@
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <button id="btn" onclick="startUltraWideEngine()">START 0.5x MR MODE</button>
+    <button id="btn" onclick="bootSecureEngine()">INITIALIZE PASSTHROUGH MR</button>
 
     <div id="container">
         <div class="eye">
@@ -63,169 +65,201 @@
     <script>
         const vids = document.querySelectorAll('video');
         let scene, leftCam, rightCam, rendererLeft, rendererRight;
-        let virtualCube, spatialGrid;
+        let floatingPanel, spatialFloor;
 
-        // Vector State Tracking Arrays
-        let tX = 0, tY = 0, cX = 0, cY = 0; 
-        let posX = 0, posY = 0, posZ = -1.5; 
+        // Shared IMU and Computer Vision coordinate spaces
+        let rx = 0, ry = 0, curX = 0, curY = 0;
+        let trackX = 0, trackZ = -1.2;
 
-        function init3DEnvironment() {
+        function build3DWorld() {
             scene = new THREE.Scene();
 
-            // Set up dual independent perspective nodes
-            leftCam = new THREE.PerspectiveCamera(70, 1.77, 0.01, 20);
-            leftCam.position.set(-0.03, 0, 0); // Asymmetric IPD structural shift
+            // Setup custom split lens aspect cameras
+            leftCam = new THREE.PerspectiveCamera(75, 1.77, 0.01, 30);
+            leftCam.position.set(-0.03, 0, 0); // Correct real IPD offset shift
 
-            rightCam = new THREE.PerspectiveCamera(70, 1.77, 0.01, 20);
+            rightCam = new THREE.PerspectiveCamera(75, 1.77, 0.01, 30);
             rightCam.position.set(0.03, 0, 0);
 
-            // Link renders over clear view canvas layouts
+            // Bind independent renders to canvas sheets
             rendererLeft = new THREE.WebGLRenderer({ canvas: document.getElementById('canvasLeft'), alpha: true, antialias: true });
             rendererRight = new THREE.WebGLRenderer({ canvas: document.getElementById('canvasRight'), alpha: true, antialias: true });
 
-            // Space-locked verification floor layout grid
-            spatialGrid = new THREE.GridHelper(10, 20, 0x00ff00, 0x224422);
-            spatialGrid.position.y = -0.8;
-            scene.add(spatialGrid);
+            // High stability Quest-style green floor mesh grid
+            spatialFloor = new THREE.GridHelper(12, 24, 0x00ff00, 0x113311);
+            spatialFloor.position.y = -0.6;
+            scene.add(spatialFloor);
 
-            // Floating Target Box
-            const geometry = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+            // Add the 3D target window panel asset
+            const geometry = new THREE.BoxGeometry(0.3, 0.2, 0.01);
             const material = new THREE.MeshBasicMaterial({ color: 0x00aeff, wireframe: true });
-            virtualCube = new THREE.Mesh(geometry, material);
-            virtualCube.position.set(0, 0, -1.5);
-            scene.add(virtualCube);
+            floatingPanel = new THREE.Mesh(geometry, material);
+            floatingPanel.position.set(0, 0, -1.2);
+            scene.add(floatingPanel);
         }
 
-        async function getUltraWideDeviceId() {
-            // Request temporary camera access to populate device labels correctly
-            const tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            
-            // Clean up temporary camera stream
-            tempStream.getTracks().forEach(track => track.stop());
-
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-            
-            // Heuristic search loop for the 0.5x ultra-wide lens signature profile
-            let targetDevice = videoDevices.find(d => 
-                d.label.toLowerCase().includes('ultra') || 
-                d.label.toLowerCase().includes('wide') ||
-                d.label.toLowerCase().includes('back 2') ||
-                d.label.toLowerCase().includes('dual')
-            );
-
-            // Fallback selection targeting the last listed rear array driver index if labels are generic
-            if (!targetDevice && videoDevices.length > 1) {
-                targetDevice = videoDevices[videoDevices.length - 1]; 
+        async function bootSecureEngine() {
+            // Check if page meets basic cryptographic secure context parameters
+            if (!window.isSecureContext) {
+                alert("CRITICAL WARNING: Web Camera pipelines require an HTTPS:// secure context link connection to function. Please switch hosts.");
             }
 
-            return targetDevice ? targetDevice.deviceId : null;
-        }
-
-        async function startUltraWideEngine() {
             document.getElementById('btn').style.display = 'none';
-            document.documentElement.requestFullscreen();
+            document.documentElement.requestFullscreen().catch(() => {});
 
-            init3DEnvironment();
-
-            let targetDeviceId = await getUltraWideDeviceId();
-            
-            // Dynamic generation of video capture constraints targeting the chosen 0.5x physical tracking sensor
-            let videoConstraints = {
-                facingMode: "environment",
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                frameRate: 60
-            };
-
-            if (targetDeviceId) {
-                // If a distinct ultra-wide lens ID is resolved, lock onto it
-                videoConstraints = { deviceId: { exact: targetDeviceId } };
-            }
+            build3DWorld();
 
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+                // Phase 1: Try to pull device lists directly
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoInputs = devices.filter(d => d.kind === 'videoinput');
                 
+                let bestLensId = null;
+                
+                // Advanced matching loop looking specifically for ultra-wide hardware nodes
+                for (let dev of videoInputs) {
+                    const name = dev.label.toLowerCase();
+                    if (name.includes('ultra') || name.includes('wide') || name.includes('0.5x') || name.includes('back 2')) {
+                        bestLensId = dev.deviceId;
+                        break;
+                    }
+                }
+
+                // If labels are blanked out by permission restrictions, pick the last indexed rear camera (typically ultra-wide)
+                if (!bestLensId && videoInputs.length > 1) {
+                    bestLensId = videoInputs[videoInputs.length - 1].deviceId;
+                }
+
+                const setupConstraints = {
+                    audio: false,
+                    video: bestLensId ? {
+                        deviceId: { exact: bestLensId },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 60 }
+                    } : {
+                        facingMode: { exact: "environment" },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(setupConstraints);
+                
+                // Mirror stream out smoothly to both eye screens simultaneously
                 vids.forEach(v => {
                     v.srcObject = stream;
+                    // Force playback constraints
+                    v.setAttribute('autoplay', 'true');
+                    v.setAttribute('playsinline', 'true');
                     v.play();
                 });
 
-                // Lock continuous hardware autofocus parameters over the ultra-wide stream track
+                // Lock down continuous autofocus loop hooks directly at the hardware driver layer
                 const track = stream.getVideoTracks()[0];
                 if (track && track.getCapabilities) {
-                    const caps = track.getCapabilities();
-                    if (caps.focusMode && caps.focusMode.includes('continuous')) {
-                        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                    const capabilities = track.getCapabilities();
+                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
                     }
                 }
-            } catch (err) {
-                console.warn("Targeted 0.5x lens assignment rejected, falling back to basic stream:", err);
-                // Fallback catch block ensuring system continuity if exact ID tracking throws a driver block
-                const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-                vids.forEach(v => v.srcObject = fallbackStream);
+
+            } catch (cameraError) {
+                console.error("Primary ultra-wide camera hook denied. Booting generic fallback channel:", cameraError);
+                // Safe recovery loop configuration to guarantee screen output
+                const safeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                vids.forEach(v => { v.srcObject = safeStream; v.play(); });
             }
 
+            // Setup internal IMU sensor array matrices
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(initIMUSensors);
-            } else { initIMUSensors(); }
+                DeviceOrientationEvent.requestPermission().then(runSensors).catch(() => runSensors());
+            } else {
+                runSensors();
+            }
 
-            requestAnimationFrame(processingLoop);
+            initOpticalVIOPipeline(vids[0]);
+            requestAnimationFrame(coreRenderEngineLoop);
         }
 
-        function initIMUSensors() {
-            // Rotational tracking calculation transforms
+        function runSensors() {
             window.addEventListener('deviceorientation', (e) => {
-                tX = e.gamma * -0.8;
-                tY = (e.beta - 75) * -0.8;
+                if(e.gamma === null || e.beta === null) return;
+                rx = e.gamma * -0.85;
+                ry = (e.beta - 75) * -0.85;
+                
+                const frameCap = 40;
+                rx = Math.max(-frameCap, Math.min(frameCap, rx));
+                ry = Math.max(-frameCap, Math.min(frameCap, ry));
+            });
+        }
 
-                const limit = 40;
-                tX = Math.max(-limit, Math.min(limit, tX));
-                tY = Math.max(-limit, Math.min(limit, tY));
+        function initOpticalVIOPipeline(masterVideoSource) {
+            const handTracker = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
 
-            // Positional 6DoF delta calculations targeting physical step offsets
-            window.addEventListener('devicemotion', (e) => {
-                const acc = e.accelerationIncludingGravity;
-                if (acc) {
-                    let deltaX = (acc.x || 0) * 0.002;
-                    let deltaZ = ((acc.z || 0) - 9.81) * 0.002;
+            handTracker.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.4,
+                minTrackingConfidence: 0.4
+            });
 
-                    if (Math.abs(deltaX) > 0.005) posX += deltaX;
-                    if (Math.abs(deltaZ) > 0.005) posZ += deltaZ;
+            handTracker.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const joints = results.multiHandLandmarks[0];
+                    const baseWrist = joints[0];
+                    const pointerTip = joints[8];
 
-                    posZ = Math.max(-3.0, Math.min(-0.5, posZ));
-                    posX = Math.max(-1.5, Math.min(1.5, posX));
+                    // Process depth metrics ($Z$) by reading wrist distance scaling from ultra-wide field
+                    const depthZ = -1.1 / (baseWrist.z * -9.5 || 1);
+                    
+                    trackX += (((baseWrist.x - 0.5) * -1.9) - trackX) * 0.18;
+                    trackZ += (depthZ - trackZ) * 0.18;
+
+                    // Absolute coordinate calculation transformation mapping over virtual menu window space
+                    const activeX = (pointerTip.x - 0.5) * 1.9;
+                    const activeY = -(pointerTip.y - 0.5) * 1.3 + 0.25;
+                    floatingPanel.position.set(activeX + trackX, activeY, -1.1 + trackZ);
                 }
             });
+
+            const processorThread = new Camera(masterVideoSource, {
+                onFrame: async () => {
+                    if (masterVideoSource.readyState >= 2) {
+                        await handTracker.send({ image: masterVideoSource });
+                    }
+                },
+                width: 480,
+                height: 360
+            });
+            processorThread.start();
         }
 
-        function processingLoop() {
-            // Apply Dampening Calculations to Panning Array Vectors
-            cX += (tX - cX) * 0.08;
-            cY += (tY - cY) * 0.08;
+        function coreRenderEngineLoop() {
+            // Apply critical low-pass filters to smooth gyro ticks
+            curX += (rx - curX) * 0.1;
+            curY += (ry - curY) * 0.1;
 
-            // Shift underlying ultra-wide physical feeds smoothly underneath WebGL spaces
-            const transformStr = `translate(${cX}px, ${cY}px)`;
-            vids.forEach(v => v.style.transform = transformStr);
+            // Offset background arrays beneath 3D elements dynamically
+            const transformString = `translate(${curX}px, ${curY}px)`;
+            vids.forEach(v => v.style.transform = transformString);
 
-            const rotY = (cX / 40) * 0.5;
-            const rotX = (cY / 40) * 0.5;
+            const headingY = (curX / 40) * 0.55;
+            const headingX = (curY / 40) * 0.55;
 
-            leftCam.rotation.set(rotX, rotY, 0, 'YXZ');
-            rightCam.rotation.set(rotX, rotY, 0, 'YXZ');
+            leftCam.rotation.set(headingX, headingY, 0, 'YXZ');
+            rightCam.rotation.set(headingX, headingY, 0, 'YXZ');
 
-            // Translate 3D coordinates based on captured movement vectors
-            virtualCube.position.set(-posX, 0, posZ);
-            spatialGrid.position.set(-posX, -0.5, posZ + 1.5);
+            // Lock spatial tracking layout based on optical inputs
+            spatialFloor.position.set(-trackX, -0.6, trackZ + 1.1);
 
-            virtualCube.rotation.y += 0.01;
-
-            // Render both views simultaneously to keep the dual layout intact
+            // Execute synchronous render outputs to maintain the side-by-side layout
             rendererLeft.render(scene, leftCam);
             rendererRight.render(scene, rightCam);
 
-            requestAnimationFrame(processingLoop);
+            requestAnimationFrame(coreRenderEngineLoop);
         }
     </script>
 </body>
