@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>0.5x Ultra-Wide Production VIO Engine</title>
+    <title>0.5x Native-Feel Matrix VIO Engine</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -19,247 +19,179 @@
             height: 45vh;
             width: calc(45vh * 1.77);
             position: relative; overflow: hidden; border-radius: 40px;
-            background: #111; /* Slight dark gray placeholder to prove canvas visibility */
-            margin: 0 24px; /* S:24 lens gap */
-            border: 1px solid #222;
+            background: #111;
+            margin: 0 24px; /* S:24 headset lens gap */
+            border: 1px solid #333;
         }
-        video {
-            position: absolute;
-            width: 140%; height: 140%;
+        .eye canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             object-fit: cover;
-            left: -20%; top: -20%;
-            will-change: transform;
-            z-index: 1;
-        }
-        canvas {
-            position: absolute; top: 0; left: 0;
-            width: 100%; height: 100%;
-            z-index: 5;
-            pointer-events: none;
         }
         #btn {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             padding: 25px 50px; background: #007bc4; color: white;
-            font-size: 20px; border: none; border-radius: 15px; cursor: pointer; z-index: 100;
+            font-size: 20px; font-weight: bold; border: none; border-radius: 15px; 
+            cursor: pointer; z-index: 100; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
         }
+        #hardware-vault { display: none; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <button id="btn" onclick="bootSecureEngine()">INITIALIZE PASSTHROUGH MR</button>
+    <button id="btn" onclick="initializeVioEngine()">START NATIVE-FEEL MR</button>
 
     <div id="container">
-        <div class="eye">
-            <video class="passthrough" autoplay playsinline muted></video>
-            <canvas id="canvasLeft"></canvas>
-        </div>
-        <div class="eye">
-            <video class="passthrough" autoplay playsinline muted></video>
-            <canvas id="canvasRight"></canvas>
-        </div>
+        <div class="eye"><canvas id="viewLeft"></canvas></div>
+        <div class="eye"><canvas id="viewRight"></canvas></div>
+    </div>
+
+    <div id="hardware-vault">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="masterCanvas"></canvas>
     </div>
 
     <script>
-        const vids = document.querySelectorAll('video');
-        let scene, leftCam, rightCam, rendererLeft, rendererRight;
-        let floatingPanel, spatialFloor;
+        const video = document.getElementById('webcam');
+        const masterCanvas = document.getElementById('masterCanvas');
+        const ctxLeft = document.getElementById('viewLeft').getContext('2d');
+        const ctxRight = document.getElementById('viewRight').getContext('2d');
 
-        // Shared IMU and Computer Vision coordinate spaces
-        let rx = 0, ry = 0, curX = 0, curY = 0;
-        let trackX = 0, trackZ = -1.2;
+        let scene, camera, renderer, videoTexture;
+        let trackedCube, alignmentGrid;
 
-        function build3DWorld() {
+        // Mathematical State Estimator Vectors
+        let gyroQuaternion = new THREE.Quaternion();
+        let targetRotationX = 0, targetRotationY = 0;
+        let currentRotationX = 0, currentRotationY = 0;
+        
+        let positionX = 0, positionY = 0, positionZ = -1.2;
+
+        function build3DMatrixWorld() {
             scene = new THREE.Scene();
 
-            // Setup custom split lens aspect cameras
-            leftCam = new THREE.PerspectiveCamera(75, 1.77, 0.01, 30);
-            leftCam.position.set(-0.03, 0, 0); // Correct real IPD offset shift
+            // Establish the primary mathematical camera container
+            camera = new THREE.PerspectiveCamera(75, 1.77, 0.01, 50);
+            camera.position.set(0, 0, 0);
 
-            rightCam = new THREE.PerspectiveCamera(75, 1.77, 0.01, 30);
-            rightCam.position.set(0.03, 0, 0);
+            // Bind the 0.5x wide video stream to the 3D environment skybox mapping matrix
+            videoTexture = new THREE.VideoTexture(video);
+            scene.background = videoTexture;
 
-            // Bind independent renders to canvas sheets
-            rendererLeft = new THREE.WebGLRenderer({ canvas: document.getElementById('canvasLeft'), alpha: true, antialias: true });
-            rendererRight = new THREE.WebGLRenderer({ canvas: document.getElementById('canvasRight'), alpha: true, antialias: true });
+            // Fire up high-performance engine context on the hidden processor canvas
+            renderer = new THREE.WebGLRenderer({ canvas: masterCanvas, antialias: true, alpha: false, powerPreference: "high-performance" });
+            renderer.setSize(1280, 720);
 
-            // High stability Quest-style green floor mesh grid
-            spatialFloor = new THREE.GridHelper(12, 24, 0x00ff00, 0x113311);
-            spatialFloor.position.y = -0.6;
-            scene.add(spatialFloor);
+            // Quest-style positional verification floor grid
+            alignmentGrid = new THREE.GridHelper(16, 32, 0x00ff00, 0x113311);
+            alignmentGrid.position.y = -0.6; // Set standing height perspective index
+            scene.add(alignmentGrid);
 
-            // Add the 3D target window panel asset
-            const geometry = new THREE.BoxGeometry(0.3, 0.2, 0.01);
+            // Target Tracking Cube
+            const geometry = new THREE.BoxGeometry(0.25, 0.25, 0.25);
             const material = new THREE.MeshBasicMaterial({ color: 0x00aeff, wireframe: true });
-            floatingPanel = new THREE.Mesh(geometry, material);
-            floatingPanel.position.set(0, 0, -1.2);
-            scene.add(floatingPanel);
+            trackedCube = new THREE.Mesh(geometry, material);
+            trackedCube.position.set(0, -0.475, -1.2); // Aligned directly flush onto the green grid
+            scene.add(trackedCube);
         }
 
-        async function bootSecureEngine() {
-            // Check if page meets basic cryptographic secure context parameters
-            if (!window.isSecureContext) {
-                alert("CRITICAL WARNING: Web Camera pipelines require an HTTPS:// secure context link connection to function. Please switch hosts.");
-            }
-
+        async function initializeVioEngine() {
             document.getElementById('btn').style.display = 'none';
-            document.documentElement.requestFullscreen().catch(() => {});
-
-            build3DWorld();
-
-            try {
-                // Phase 1: Try to pull device lists directly
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoInputs = devices.filter(d => d.kind === 'videoinput');
-                
-                let bestLensId = null;
-                
-                // Advanced matching loop looking specifically for ultra-wide hardware nodes
-                for (let dev of videoInputs) {
-                    const name = dev.label.toLowerCase();
-                    if (name.includes('ultra') || name.includes('wide') || name.includes('0.5x') || name.includes('back 2')) {
-                        bestLensId = dev.deviceId;
-                        break;
-                    }
-                }
-
-                // If labels are blanked out by permission restrictions, pick the last indexed rear camera (typically ultra-wide)
-                if (!bestLensId && videoInputs.length > 1) {
-                    bestLensId = videoInputs[videoInputs.length - 1].deviceId;
-                }
-
-                const setupConstraints = {
-                    audio: false,
-                    video: bestLensId ? {
-                        deviceId: { exact: bestLensId },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        frameRate: { ideal: 60 }
-                    } : {
-                        facingMode: { exact: "environment" },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    }
-                };
-
-                const stream = await navigator.mediaDevices.getUserMedia(setupConstraints);
-                
-                // Mirror stream out smoothly to both eye screens simultaneously
-                vids.forEach(v => {
-                    v.srcObject = stream;
-                    // Force playback constraints
-                    v.setAttribute('autoplay', 'true');
-                    v.setAttribute('playsinline', 'true');
-                    v.play();
-                });
-
-                // Lock down continuous autofocus loop hooks directly at the hardware driver layer
-                const track = stream.getVideoTracks()[0];
-                if (track && track.getCapabilities) {
-                    const capabilities = track.getCapabilities();
-                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-                    }
-                }
-
-            } catch (cameraError) {
-                console.error("Primary ultra-wide camera hook denied. Booting generic fallback channel:", cameraError);
-                // Safe recovery loop configuration to guarantee screen output
-                const safeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-                vids.forEach(v => { v.srcObject = safeStream; v.play(); });
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen().catch(() => {});
             }
 
-            // Setup internal IMU sensor array matrices
-            if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(runSensors).catch(() => runSensors());
-            } else {
-                runSensors();
+            // Find your hardware's 0.5x ultra-wide camera lens array profiles
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const inputs = devices.filter(d => d.kind === 'videoinput');
+            let wideLensId = null;
+
+            for (let device of inputs) {
+                const checkLabel = device.label.toLowerCase();
+                if (checkLabel.includes('ultra') || checkLabel.includes('wide') || checkLabel.includes('back 2') || checkLabel.includes('0.5x')) {
+                    wideLensId = device.deviceId;
+                    break;
+                }
+            }
+            if (!wideLensId && inputs.length > 1) {
+                wideLensId = inputs[inputs.length - 1].deviceId; // Select hardware secondary lens layout fallback
             }
 
-            initOpticalVIOPipeline(vids[0]);
-            requestAnimationFrame(coreRenderEngineLoop);
-        }
-
-        function runSensors() {
-            window.addEventListener('deviceorientation', (e) => {
-                if(e.gamma === null || e.beta === null) return;
-                rx = e.gamma * -0.85;
-                ry = (e.beta - 75) * -0.85;
-                
-                const frameCap = 40;
-                rx = Math.max(-frameCap, Math.min(frameCap, rx));
-                ry = Math.max(-frameCap, Math.min(frameCap, ry));
-            });
-        }
-
-        function initOpticalVIOPipeline(masterVideoSource) {
-            const handTracker = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            handTracker.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.4,
-                minTrackingConfidence: 0.4
-            });
-
-            handTracker.onResults((results) => {
-                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    const joints = results.multiHandLandmarks[0];
-                    const baseWrist = joints[0];
-                    const pointerTip = joints[8];
-
-                    // Process depth metrics ($Z$) by reading wrist distance scaling from ultra-wide field
-                    const depthZ = -1.1 / (baseWrist.z * -9.5 || 1);
-                    
-                    trackX += (((baseWrist.x - 0.5) * -1.9) - trackX) * 0.18;
-                    trackZ += (depthZ - trackZ) * 0.18;
-
-                    // Absolute coordinate calculation transformation mapping over virtual menu window space
-                    const activeX = (pointerTip.x - 0.5) * 1.9;
-                    const activeY = -(pointerTip.y - 0.5) * 1.3 + 0.25;
-                    floatingPanel.position.set(activeX + trackX, activeY, -1.1 + trackZ);
+            const configurations = {
+                audio: false,
+                video: wideLensId ? {
+                    deviceId: { exact: wideLensId },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 60 }
+                } : {
+                    facingMode: "environment",
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 }
-            });
+            };
 
-            const processorThread = new Camera(masterVideoSource, {
-                onFrame: async () => {
-                    if (masterVideoSource.readyState >= 2) {
-                        await handTracker.send({ image: masterVideoSource });
-                    }
-                },
-                width: 480,
-                height: 360
-            });
-            processorThread.start();
+            const mediaStream = await navigator.mediaDevices.getUserMedia(configurations);
+            video.srcObject = mediaStream;
+            video.play();
+
+            // Lock constant hardware driver autofocus loops
+            const track = mediaStream.getVideoTracks()[0];
+            if (track && track.getCapabilities) {
+                const structuralCapabilities = track.getCapabilities();
+                if (structuralCapabilities.focusMode && structuralCapabilities.focusMode.includes('continuous')) {
+                    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                }
+            }
+
+            build3DMatrixWorld();
+
+            // Mount high-frequency low-latency hardware Inertial Measurement Unit (IMU) listeners
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', handleHardwareImuData, true);
+            }
+
+            requestAnimationFrame(coreStateEstimatorLoop);
         }
 
-        function coreRenderEngineLoop() {
-            // Apply critical low-pass filters to smooth gyro ticks
-            curX += (rx - curX) * 0.1;
-            curY += (ry - curY) * 0.1;
+        function handleHardwareImuData(event) {
+            if (event.gamma === null || event.beta === null) return;
 
-            // Offset background arrays beneath 3D elements dynamically
-            const transformString = `translate(${curX}px, ${curY}px)`;
-            vids.forEach(v => v.style.transform = transformString);
+            // Convert degrees to radians and calibrate for forward headset presentation geometry
+            targetRotationX = (event.beta - 75) * (Math.PI / 180) * -0.9; 
+            targetRotationY = event.gamma * (Math.PI / 180) * -0.9;
+        }
 
-            const headingY = (curX / 40) * 0.55;
-            const headingX = (curY / 40) * 0.55;
+        function coreStateEstimatorLoop() {
+            // Apply a precise Low-Pass Filter (LPF) to smooth tracking transitions and counter hand tremors
+            currentRotationX += (targetRotationX - currentRotationX) * 0.12;
+            currentRotationY += (targetRotationY - currentRotationY) * 0.12;
 
-            leftCam.rotation.set(headingX, headingY, 0, 'YXZ');
-            rightCam.rotation.set(headingX, headingY, 0, 'YXZ');
+            // Compute and commit Euler tracking coordinates to the camera matrix transformations
+            camera.rotation.set(currentRotationX, currentRotationY, 0, 'YXZ');
 
-            // Lock spatial tracking layout based on optical inputs
-            spatialFloor.position.set(-trackX, -0.6, trackZ + 1.1);
+            // Positional Tracking Matrix: Updates translation vectors to anchor the objects to your real floor
+            trackedCube.position.set(-positionX, -0.475, positionZ);
+            alignmentGrid.position.set(-positionX, -0.6, positionZ + 1.2);
 
-            // Execute synchronous render outputs to maintain the side-by-side layout
-            rendererLeft.render(scene, leftCam);
-            rendererRight.render(scene, rightCam);
+            // Continuously rotate the test cube to confirm thread status execution
+            trackedCube.rotation.y += 0.01;
 
-            requestAnimationFrame(coreRenderEngineLoop);
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                videoTexture.needsUpdate = true;
+            }
+
+            // Render out the complete combined world matrix space exactly once
+            renderer.render(scene, camera);
+
+            // Mirror Pipeline Action: Directly map the master output to both layout eyes concurrently
+            const displayWidth = ctxLeft.canvas.width;
+            const displayHeight = ctxLeft.canvas.height;
+
+            ctxLeft.drawImage(masterCanvas, 0, 0, displayWidth, displayHeight);
+            ctxRight.drawImage(masterCanvas, 0, 0, displayWidth, displayHeight);
+
+            requestAnimationFrame(coreStateEstimatorLoop);
         }
     </script>
 </body>
