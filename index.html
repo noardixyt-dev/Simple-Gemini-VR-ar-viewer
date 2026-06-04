@@ -3,28 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>True 6DoF Hardware VIO Split-Screen</title>
+    <title>0.5x Ultra-Wide 6DoF SBS Engine</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
             background: #000; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
         }
         #container {
             display: flex; align-items: center; justify-content: center;
             width: 100%; height: 100%;
-            /* Your hard-coded physical headset calibration offsets */
-            transform: translate(-5px, 10px); 
+            transform: translate(-5px, 10px); /* Hardcoded layout calibration offsets */
         }
         .eye {
             height: 45vh;
             width: calc(45vh * 1.77);
             position: relative; overflow: hidden; border-radius: 40px;
             background: #000;
-            margin: 0 24px; /* S:24 lens gap */
+            margin: 0 24px; /* S:24 spacing */
             border: 1px solid #222;
         }
+        video {
+            position: absolute;
+            width: 130%; height: 130%;
+            object-fit: cover;
+            left: -15%; top: -15%;
+            will-change: transform;
+            z-index: 1;
+        }
         canvas {
+            position: absolute; top: 0; left: 0;
             width: 100%; height: 100%;
+            z-index: 5;
+            pointer-events: none;
         }
         #btn {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -36,111 +47,185 @@
 </head>
 <body>
 
-    <button id="btn" onclick="startVIO()">START HARDWARE 6DoF SBS</button>
+    <button id="btn" onclick="startUltraWideEngine()">START 0.5x MR MODE</button>
 
     <div id="container">
-        <div class="eye"><canvas id="leftCanvas"></canvas></div>
-        <div class="eye"><canvas id="rightCanvas"></canvas></div>
+        <div class="eye">
+            <video class="passthrough" autoplay playsinline muted></video>
+            <canvas id="canvasLeft"></canvas>
+        </div>
+        <div class="eye">
+            <video class="passthrough" autoplay playsinline muted></video>
+            <canvas id="canvasRight"></canvas>
+        </div>
     </div>
 
     <script>
+        const vids = document.querySelectorAll('video');
         let scene, leftCam, rightCam, rendererLeft, rendererRight;
-        let mainCube, floorGrid;
+        let virtualCube, spatialGrid;
 
-        function initScene() {
+        // Vector State Tracking Arrays
+        let tX = 0, tY = 0, cX = 0, cY = 0; 
+        let posX = 0, posY = 0, posZ = -1.5; 
+
+        function init3DEnvironment() {
             scene = new THREE.Scene();
 
-            // Set up native hardware video background texture
-            const video = document.createElement('video');
-            video.autoplay = true;
-            video.playsinline = true;
-            
-            // Force hardware Autofocus, stable frame rates, and high resolution
-            navigator.mediaDevices.getUserMedia({
-                video: { 
-                    facingMode: "environment", 
-                    width: { ideal: 1920 }, 
-                    height: { ideal: 1080 },
-                    frameRate: { ideal: 60 },
-                    focusMode: "continuous" // Direct hardware instruction for continuous autofocus
-                }
-            }).then(stream => {
-                video.srcObject = stream;
-                // Lock autofocus via tracks if supported by device browser
-                const track = stream.getVideoTracks()[0];
-                const capabilities = track.getCapabilities();
-                if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-                }
-            });
-
-            const videoTexture = new THREE.VideoTexture(video);
-            scene.background = videoTexture;
-
-            // Setup stereoscopic dual cameras (IPD shifted)
+            // Set up dual independent perspective nodes
             leftCam = new THREE.PerspectiveCamera(70, 1.77, 0.01, 20);
+            leftCam.position.set(-0.03, 0, 0); // Asymmetric IPD structural shift
+
             rightCam = new THREE.PerspectiveCamera(70, 1.77, 0.01, 20);
+            rightCam.position.set(0.03, 0, 0);
 
-            // Separate eye renderers linked to your calibrated HTML structure
-            rendererLeft = new THREE.WebGLRenderer({ canvas: document.getElementById('leftCanvas'), antialias: true });
-            rendererRight = new THREE.WebGLRenderer({ canvas: document.getElementById('rightCanvas'), antialias: true });
+            // Link renders over clear view canvas layouts
+            rendererLeft = new THREE.WebGLRenderer({ canvas: document.getElementById('canvasLeft'), alpha: true, antialias: true });
+            rendererRight = new THREE.WebGLRenderer({ canvas: document.getElementById('canvasRight'), alpha: true, antialias: true });
 
-            // Create an object locked to the tracking grid space
-            const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-            mainCube = new THREE.Mesh(geometry, material);
-            mainCube.position.set(0, 0, -1.5); // Fixed 1.5 meters out in space
-            scene.add(mainCube);
+            // Space-locked verification floor layout grid
+            spatialGrid = new THREE.GridHelper(10, 20, 0x00ff00, 0x224422);
+            spatialGrid.position.y = -0.8;
+            scene.add(spatialGrid);
 
-            // True Quest-style floor grid
-            floorGrid = new THREE.GridHelper(10, 20, 0xff0000, 0x441111);
-            floorGrid.position.y = -1.0;
-            scene.add(floorGrid);
+            // Floating Target Box
+            const geometry = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00aeff, wireframe: true });
+            virtualCube = new THREE.Mesh(geometry, material);
+            virtualCube.position.set(0, 0, -1.5);
+            scene.add(virtualCube);
         }
 
-        function startVIO() {
+        async function getUltraWideDeviceId() {
+            // Request temporary camera access to populate device labels correctly
+            const tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            
+            // Clean up temporary camera stream
+            tempStream.getTracks().forEach(track => track.stop());
+
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            
+            // Heuristic search loop for the 0.5x ultra-wide lens signature profile
+            let targetDevice = videoDevices.find(d => 
+                d.label.toLowerCase().includes('ultra') || 
+                d.label.toLowerCase().includes('wide') ||
+                d.label.toLowerCase().includes('back 2') ||
+                d.label.toLowerCase().includes('dual')
+            );
+
+            // Fallback selection targeting the last listed rear array driver index if labels are generic
+            if (!targetDevice && videoDevices.length > 1) {
+                targetDevice = videoDevices[videoDevices.length - 1]; 
+            }
+
+            return targetDevice ? targetDevice.deviceId : null;
+        }
+
+        async function startUltraWideEngine() {
             document.getElementById('btn').style.display = 'none';
             document.documentElement.requestFullscreen();
+
+            init3DEnvironment();
+
+            let targetDeviceId = await getUltraWideDeviceId();
             
-            initScene();
+            // Dynamic generation of video capture constraints targeting the chosen 0.5x physical tracking sensor
+            let videoConstraints = {
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: 60
+            };
 
-            // Intercept native browser WebXR session ONLY for its hardware 6DoF VIO data matrix
-            navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local-floor'] }).then(session => {
-                const glContext = rendererLeft.getContext();
+            if (targetDeviceId) {
+                // If a distinct ultra-wide lens ID is resolved, lock onto it
+                videoConstraints = { deviceId: { exact: targetDeviceId } };
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
                 
-                // Secret Hack: We make an invisible WebGL reference layer to steal tracking updates
-                session.updateRenderState({ baseLayer: new XRWebGLLayer(session, glContext) });
-                
-                const referenceSpace = session.requestReferenceSpace('local-floor').then(refSpace => {
-                    session.requestAnimationFrame(function onFrame(time, frame) {
-                        session.requestAnimationFrame(onFrame);
-                        
-                        const pose = frame.getViewerPose(refSpace);
-                        if (pose) {
-                            // Extract TRUE 6DoF hardware position matrix tracking directly from your phone's VIO core
-                            const position = pose.transform.position;
-                            const orientation = pose.transform.orientation;
-
-                            const internalRotation = new THREE.Quaternion(orientation.x, orientation.y, orientation.z, orientation.w);
-
-                            // Apply the absolute hardware coordinates to Left Eye Camera
-                            leftCam.position.set(position.x - 0.03, position.y, position.z);
-                            leftCam.quaternion.copy(internalRotation);
-
-                            // Apply the absolute hardware coordinates to Right Eye Camera
-                            rightCam.position.set(position.x + 0.03, position.y, position.z);
-                            rightCam.quaternion.copy(internalRotation);
-
-                            // Keep the object rotating smoothly relative to the tracking grid frame
-                            mainCube.rotation.y += 0.01;
-
-                            // Force synchronous dual-canvas execution
-                            rendererLeft.render(scene, leftCam);
-                            rendererRight.render(scene, rightCam);
-                        }
-                    });
+                vids.forEach(v => {
+                    v.srcObject = stream;
+                    v.play();
                 });
+
+                // Lock continuous hardware autofocus parameters over the ultra-wide stream track
+                const track = stream.getVideoTracks()[0];
+                if (track && track.getCapabilities) {
+                    const caps = track.getCapabilities();
+                    if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                    }
+                }
+            } catch (err) {
+                console.warn("Targeted 0.5x lens assignment rejected, falling back to basic stream:", err);
+                // Fallback catch block ensuring system continuity if exact ID tracking throws a driver block
+                const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                vids.forEach(v => v.srcObject = fallbackStream);
+            }
+
+            if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(initIMUSensors);
+            } else { initIMUSensors(); }
+
+            requestAnimationFrame(processingLoop);
+        }
+
+        function initIMUSensors() {
+            // Rotational tracking calculation transforms
+            window.addEventListener('deviceorientation', (e) => {
+                tX = e.gamma * -0.8;
+                tY = (e.beta - 75) * -0.8;
+
+                const limit = 40;
+                tX = Math.max(-limit, Math.min(limit, tX));
+                tY = Math.max(-limit, Math.min(limit, tY));
             });
+
+            // Positional 6DoF delta calculations targeting physical step offsets
+            window.addEventListener('devicemotion', (e) => {
+                const acc = e.accelerationIncludingGravity;
+                if (acc) {
+                    let deltaX = (acc.x || 0) * 0.002;
+                    let deltaZ = ((acc.z || 0) - 9.81) * 0.002;
+
+                    if (Math.abs(deltaX) > 0.005) posX += deltaX;
+                    if (Math.abs(deltaZ) > 0.005) posZ += deltaZ;
+
+                    posZ = Math.max(-3.0, Math.min(-0.5, posZ));
+                    posX = Math.max(-1.5, Math.min(1.5, posX));
+                }
+            });
+        }
+
+        function processingLoop() {
+            // Apply Dampening Calculations to Panning Array Vectors
+            cX += (tX - cX) * 0.08;
+            cY += (tY - cY) * 0.08;
+
+            // Shift underlying ultra-wide physical feeds smoothly underneath WebGL spaces
+            const transformStr = `translate(${cX}px, ${cY}px)`;
+            vids.forEach(v => v.style.transform = transformStr);
+
+            const rotY = (cX / 40) * 0.5;
+            const rotX = (cY / 40) * 0.5;
+
+            leftCam.rotation.set(rotX, rotY, 0, 'YXZ');
+            rightCam.rotation.set(rotX, rotY, 0, 'YXZ');
+
+            // Translate 3D coordinates based on captured movement vectors
+            virtualCube.position.set(-posX, 0, posZ);
+            spatialGrid.position.set(-posX, -0.5, posZ + 1.5);
+
+            virtualCube.rotation.y += 0.01;
+
+            // Render both views simultaneously to keep the dual layout intact
+            rendererLeft.render(scene, leftCam);
+            rendererRight.render(scene, rightCam);
+
+            requestAnimationFrame(processingLoop);
         }
     </script>
 </body>
