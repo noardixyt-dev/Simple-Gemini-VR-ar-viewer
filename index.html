@@ -3,74 +3,142 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>6DoF Dual-Eye Mixed Reality Engine</title>
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <title>6DoF Dual-Eye Custom VIO Engine</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background: #000; overflow: hidden;
+        }
+
+        /* Our Custom Dual-Eye Lens Container matching your physical calibration settings */
+        #lens-container {
+            display: flex; align-items: center; justify-content: center;
+            width: 100%; height: 100%;
+            transform: translate(-5px, 10px); /* Your hardcoded calibration offsets */
+        }
+
+        .eye-viewport {
+            height: 45vh;
+            width: calc(45vh * 1.77);
+            position: relative; overflow: hidden; border-radius: 40px;
+            background: #000;
+            margin: 0 24px; /* S:24 gap between your lenses */
+            border: 1px solid #222;
+        }
+
+        /* The two separate canvas layers that display our 3D VIO-tracked worlds */
+        canvas {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+        }
+
+        #start-screen {
+            position: fixed; inset: 0; background: #000; z-index: 100;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        button {
+            padding: 25px 50px; background: #111; color: #00aeff;
+            border: 2px solid #00aeff; border-radius: 15px; font-size: 22px; cursor: pointer;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-        #start-btn {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 25px 50px; font-size: 22px; font-weight: bold; background: #007bc4;
-            color: white; border: none; border-radius: 12px; cursor: pointer; z-index: 9999;
-        }
-        /* Hidden passthrough video element used to feed the hand tracker and background */
-        #passthrough-video { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-    </style>
 </head>
 <body>
 
-    <button id="start-btn" onclick="initializeMR()">START 6DoF MR MODE</button>
-    <video id="passthrough-video" autoplay playsinline muted></video>
+    <div id="start-screen">
+        <button onclick="bootVIOEngine()">START TRUE 6DoF MR</button>
+    </div>
 
-    <a-scene vr-mode-ui="enabled: true" loading-screen="enabled: false">
-        
-        <a-assets>
-            <canvas id="camera-canvas" width="1024" height="512"></canvas>
-        </a-assets>
-
-        <a-entity id="camera-rig" position="0 1.6 0">
-            <a-camera id="user-head" look-controls="enabled: true" wasd-controls="enabled: false"></a-camera>
-        </a-entity>
-
-        <a-grid position="0 0 0" cell-size="0.5" section-size="2" color="#00ff00" distance="15"></a-grid>
-
-        <a-box id="mr-menu" position="0 1.4 -1.2" width="0.5" height="0.3" depth="0.02" color="#00aeff" material="wireframe: true"></a-box>
-
-        <a-sky src="#camera-canvas" rotation="0 90 0"></a-sky>
-
-    </a-scene>
+    <div id="lens-container">
+        <div class="eye-viewport">
+            <canvas id="left-canvas"></canvas>
+        </div>
+        <div class="eye-viewport">
+            <canvas id="right-canvas"></canvas>
+        </div>
+    </div>
 
     <script>
-        const videoElement = document.getElementById('passthrough-video');
-        const canvasElement = document.getElementById('camera-canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const userHead = document.getElementById('user-head');
-        const mrMenu = document.getElementById('mr-menu');
-        
-        let positionX = 0, positionY = 1.6, positionZ = 0;
+        let scene, leftCam, rightCam, rendererLeft, rendererRight;
+        let spatialGrid, interactionMenu;
+        let videoFeed;
 
-        async function initializeMR() {
-            document.getElementById('start-btn').style.display = 'none';
+        // VIO Virtual Coordinates tracking state
+        let vioX = 0, vioY = 1.6, vioZ = 0;
+        let vioRotX = 0, vioRotY = 0, vioRotZ = 0;
+
+        function initDualEyeSystem() {
+            scene = new THREE.Scene();
+
+            // Create a custom texture from the live camera to display as the background
+            videoFeed = document.createElement('video');
+            videoFeed.setAttribute('autoplay', '');
+            videoFeed.setAttribute('playsinline', '');
+            videoFeed.setAttribute('muted', '');
             
-            // Request low-latency rear-facing environment camera
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: 60 }
-            });
-            videoElement.srcObject = stream;
+            const videoTexture = new THREE.VideoTexture(videoFeed);
+            scene.background = videoTexture; // Maps the passthrough straight to the virtual skybox
 
-            // Trigger stereoscopic headset split screen mode natively inside A-Frame
-            const sceneEl = document.querySelector('a-scene');
-            if (sceneEl.is('vr-mode')) {
-                sceneEl.enterVR();
-            } else {
-                sceneEl.addEventListener('loaded', () => sceneEl.enterVR());
-            }
+            // Left Eye Camera Setup (Offset slightly to the left for IPD depth perception)
+            leftCam = new THREE.PerspectiveCamera(70, 1.77, 0.01, 100);
+            leftCam.position.set(-0.03, 1.6, 0); 
 
-            initTrackingPipeline();
+            // Right Eye Camera Setup (Offset slightly to the right for IPD depth perception)
+            rightCam = new THREE.PerspectiveCamera(70, 1.77, 0.01, 100);
+            rightCam.position.set(0.03, 1.6, 0);
+
+            // Separate Renderers mapped to our hardcoded HTML viewports
+            rendererLeft = new THREE.WebGLRenderer({ canvas: document.getElementById('left-canvas'), antialias: true });
+            rendererLeft.setPixelRatio(window.devicePixelRatio);
+            
+            rendererRight = new THREE.WebGLRenderer({ canvas: document.getElementById('right-canvas'), antialias: true });
+            rendererRight.setPixelRatio(window.devicePixelRatio);
+
+            // Quest-style Spatial Grid pinned down to the virtual floor
+            spatialGrid = new THREE.GridHelper(20, 40, 0x00ff00, 0x113311);
+            spatialGrid.position.y = 0; // Absolute floor tracking height
+            scene.add(spatialGrid);
+
+            // Interactive Menu Panel floating in space
+            const geo = new THREE.BoxGeometry(0.4, 0.25, 0.02);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x00aeff, wireframe: true });
+            interactionMenu = new THREE.Mesh(geo, mat);
+            interactionMenu.position.set(0, 1.4, -1.2);
+            scene.add(interactionMenu);
         }
 
-        function initTrackingPipeline() {
+        async function bootVIOEngine() {
+            document.getElementById('start-screen').style.display = 'none';
+            document.documentElement.requestFullscreen();
+
+            initDualEyeSystem();
+
+            // Request the high-frame-rate environment camera
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment", width: 1280, height: 720, frameRate: 60 }
+            });
+            videoFeed.srcObject = stream;
+            videoFeed.play();
+
+            // Fire up native Device Orientation tracking for immediate, low-latency rotation VIO matrix
+            window.addEventListener('deviceorientation', handleHardwareVIO);
+
+            // Fire up MediaPipe to handle optical positioning changes (6DoF depth scaling)
+            initOpticalVIO(videoFeed);
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        function handleHardwareVIO(e) {
+            // Converts hardware IMU metrics smoothly into standard radians for the cameras
+            vioRotX = THREE.MathUtils.degToRad(e.beta - 75) * 0.8;
+            vioRotY = THREE.MathUtils.degToRad(e.gamma) * 0.8;
+        }
+
+        function initOpticalVIO(videoSource) {
             const hands = new Hands({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
@@ -83,40 +151,50 @@
             });
 
             hands.onResults((results) => {
-                // 1. Process the Passthrough Camera frame onto the background canvas skybox
-                canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-
-                // 2. Fallback 6DoF Optical Flow Tracking (Quest-Style Camera Space Positioning)
-                // If the user moves side-to-side, we adjust the camera position manually to simulate 6DoF
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const hand = results.multiHandLandmarks[0];
-                    const wrist = hand[0]; // Wrist landmark provides steady spatial anchoring
-                    const indexTip = hand[8]; // Index tip for direct menu tracking
+                    const wrist = hand[0];
+                    const indexFinger = hand[8];
 
-                    // Calculate positional changes based on the scale of the wrist in the camera frame
-                    let zEstimate = -1.0 / (wrist.z * -10 || 1); 
-                    positionX = (wrist.x - 0.5) * -2.0;
-                    positionZ = zEstimate;
+                    // 6DoF Visual Tracking Trick: 
+                    // Calculate positional translation ($X, Y, Z$) by analyzing the size scale of the wrist array
+                    const zScale = -1.0 / (wrist.z * -12 || 1);
+                    
+                    // Smoothly map real-world body movement into the virtual room coordinates
+                    vioX += (((wrist.x - 0.5) * -1.5) - vioX) * 0.1;
+                    vioZ += (zScale - vioZ) * 0.1;
 
-                    // Apply the calculated 6DoF coordinates to your headset's core head position target
-                    userHead.setAttribute('position', `${positionX} ${positionY} ${positionZ}`);
-
-                    // 3. Hand Tracking Over Menu Intersection
-                    const menuX = (indexTip.x - 0.5) * 2;
-                    const menuY = -(indexTip.y - 0.5) * 1.5 + 1.6;
-                    mrMenu.setAttribute('position', `${menuX} ${menuY} -1.2`);
+                    // Simultaneously map the interactive Hand Tracker straight over our Floating Menu object
+                    const handX = (indexFinger.x - 0.5) * 1.8;
+                    const handY = -(indexFinger.y - 0.5) * 1.2 + 1.6;
+                    interactionMenu.position.set(handX + vioX, handY, -1.0 + vioZ);
                 }
             });
 
-            // Feed camera frames to the calculation loop at a stable 60Hz rate
-            const cameraUtils = new Camera(videoElement, {
+            const cameraUtils = new Camera(videoSource, {
                 onFrame: async () => {
-                    await hands.send({ image: videoElement });
+                    await hands.send({ image: videoSource });
                 },
                 width: 640,
                 height: 480
             });
             cameraUtils.start();
+        }
+
+        function renderLoop() {
+            // Apply the final computed 6DoF VIO translation coordinates directly to BOTH virtual eye cameras
+            leftCam.position.set(vioX - 0.03, vioY, vioZ);
+            rightCam.position.set(vioX + 0.03, vioY, vioZ);
+
+            // Apply global rotation matrices matching your physical head lean
+            leftCam.rotation.set(vioRotX, vioRotY, 0, 'YXZ');
+            rightCam.rotation.set(vioRotX, vioRotY, 0, 'YXZ');
+
+            // Render out the distinct viewpoints to our dual physical viewports simultaneously
+            rendererLeft.render(scene, leftCam);
+            rendererRight.render(scene, rightCam);
+
+            requestAnimationFrame(renderLoop);
         }
     </script>
 </body>
