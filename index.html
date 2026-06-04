@@ -3,109 +3,116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Locked-Float VR</title>
+    <title>Quest-Style Mixed Reality Engine</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
-            background: black; overflow: hidden;
-            display: flex; align-items: center; justify-content: center;
+            overflow: hidden; background-color: #000;
         }
-
-        #container { 
-            display: flex; align-items: center; justify-content: center; 
-            width: 100%; 
-            /* Hard-coded offsets from your calibration: S:24, V:10, and 5px Left */
-            transform: translate(-5px, 10px); 
-        }
-
-        .eye {
-            /* Height 45vh for better FOV as requested */
-            height: 45vh; 
-            width: calc(45vh * 1.77); 
-            position: relative; overflow: hidden; border-radius: 40px; 
-            background: #000;
-            margin: 0 24px; /* S:24 */
-            border: 1px solid #222;
-        }
-
-        video {
-            position: absolute; 
-            /* 130% size gives us a 15% safety 'bleed' on all sides 
-               to move the image without showing black edges */
-            width: 130%; height: 130%;
-            object-fit: cover; 
-            left: -15%; top: -15%;
-            will-change: transform;
-        }
-
-        #overlay {
-            position: fixed; inset: 0; background: #000; z-index: 100;
-            display: flex; align-items: center; justify-content: center;
-        }
-
-        button {
-            padding: 30px 60px; background: #111; color: white;
-            border: 2px solid #444; border-radius: 15px; font-size: 20px;
+        #xr-button {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 20px 40px; font-size: 20px; font-weight: bold;
+            background-color: #007bc4; color: white;
+            border: none; border-radius: 10px; cursor: pointer;
+            z-index: 100; shadow: 0px 4px 10px rgba(0,0,0,0.5);
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <div id="overlay">
-        <button onclick="launch()">START STABLE VIEW</button>
-    </div>
-
-    <div id="container">
-        <div class="eye"><video id="v1" autoplay playsinline muted></video></div>
-        <div class="eye"><video id="v2" autoplay playsinline muted></video></div>
-    </div>
+    <button id="xr-button">ENTER QUEST-MODE MR</button>
 
     <script>
-        const vids = document.querySelectorAll('video');
-        let tX = 0, tY = 0; // Target
-        let cX = 0, cY = 0; // Current
+        let scene, camera, renderer, xrSession = null;
+        const xrButton = document.getElementById('xr-button');
 
-        async function launch() {
-            document.getElementById('overlay').style.display = 'none';
-            document.documentElement.requestFullscreen();
+        function initCore3D() {
+            // Setup the 3D scene where your grid and menus live
+            scene = new THREE.Scene();
 
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: 1920, height: 1080, frameRate: 60 }
+            // Create a camera. WebXR will completely take this over and apply 
+            // true 6DoF movement based on your phone's camera tracking.
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            // WebGL Renderer with alpha enabled so the real world shows behind the 3D items
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio to prevent overheating
+            renderer.xr.enabled = true; 
+            document.body.appendChild(renderer.domElement);
+
+            // Add a highly visible, Quest-style spatial floor grid
+            // This grid stays perfectly locked to your physical floor as you move
+            const gridHelper = new THREE.GridHelper(20, 40, 0x00ff00, 0x224422);
+            gridHelper.position.y = -1.6; // Locks approximately to real-world floor level
+            scene.add(gridHelper);
+
+            // Add a sample 3D Floating Menu Panel in space
+            const geometry = new THREE.BoxGeometry(0.5, 0.3, 0.02);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00aeff, wireframe: true });
+            const floatingMenu = new THREE.Mesh(geometry, material);
+            floatingMenu.position.set(0, 0, -1.5); // Placed exactly 1.5 meters in front of your headset
+            scene.add(floatingMenu);
+
+            // Core WebXR Render Loop running at native hardware frame rate (60Hz / 90Hz)
+            renderer.setAnimationLoop((timestamp, frame) => {
+                if (frame) {
+                    // WebXR is actively tracking your head position here via the phone camera.
+                    // The renderer automatically handles the side-by-side split screen for your lenses.
+                    renderer.render(scene, camera);
+                }
             });
-            vids.forEach(v => v.srcObject = stream);
-
-            if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(reg);
-            } else { reg(); }
-            
-            requestAnimationFrame(loop);
         }
 
-        function reg() {
-            window.addEventListener('deviceorientation', (e) => {
-                // We use a low multiplier (0.8) so it doesn't jump over the window edges
-                // This keeps the "screen" mostly centered in front of your face
-                tX = e.gamma * -0.8;
-                tY = (e.beta - 75) * -0.8;
-
-                // HARD CLAMP: This prevents the video from ever showing 50% of the window
-                // It stops the image before the black background shows
-                const limit = 40; 
-                tX = Math.max(-limit, Math.min(limit, tX));
-                tY = Math.max(-limit, Math.min(limit, tY));
-            });
+        async function checkWebXR() {
+            if ('xr' in navigator) {
+                // 'immersive-ar' forces native camera passthrough background automatically
+                const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                if (isSupported) {
+                    xrButton.addEventListener('click', toggleXRSession);
+                } else {
+                    xrButton.textContent = "Your browser doesn't support Immersive AR";
+                }
+            } else {
+                xrButton.textContent = "WebXR API not found (Use Chrome/Opera on Android)";
+            }
         }
 
-        function loop() {
-            // LERP smoothing: 0.08 makes it feel very heavy and dampened (OIS-like)
-            cX += (tX - cX) * 0.08;
-            cY += (tY - cY) * 0.08;
-
-            const transform = `translate(${cX}px, ${cY}px)`;
-            vids.forEach(v => v.style.transform = transform);
-
-            requestAnimationFrame(loop);
+        async function toggleXRSession() {
+            if (!xrSession) {
+                try {
+                    // Request session with 'local-floor' to enable native hardware world tracking
+                    xrSession = await navigator.xr.requestSession('immersive-ar', {
+                        requiredFeatures: ['local-floor'],
+                        optionalFeatures: ['hand-tracking'] // Requests native hand joints if hardware supports it
+                    });
+                    
+                    xrButton.style.display = 'none';
+                    renderer.xr.setSession(xrSession);
+                    
+                    xrSession.addEventListener('end', () => {
+                        xrSession = null;
+                        xrButton.style.display = 'block';
+                    });
+                } catch (error) {
+                    console.error("Failed to boot WebXR engine:", error);
+                    alert("XR entry denied. Ensure camera permissions are allowed.");
+                }
+            }
         }
+
+        // Initialize setup cleanly
+        initCore3D();
+        checkWebXR();
+
+        // Handle viewport adjustments if device rotates before launching
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
