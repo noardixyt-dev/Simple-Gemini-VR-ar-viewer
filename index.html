@@ -3,58 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Native VIO Passthrough</title>
+    <title>Fixed Back-Cam VIO</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
-        #overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; align-items: center; justify-content: center; z-index: 10;
+        body { margin: 0; overflow: hidden; background: black; }
+        #start-btn {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 20px; font-size: 20px; z-index: 100;
         }
-        button { padding: 20px 40px; font-size: 20px; border-radius: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div id="overlay"><button id="btn">START NATIVE AR</button></div>
+    <button id="start-btn">LAUNCH BACK-CAM AR</button>
     <script type="module">
         import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
         import { XRButton } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/webxr/XRButton.js';
 
-        let camera, scene, renderer, cube;
+        const btn = document.getElementById('start-btn');
+        btn.onclick = async () => {
+            btn.style.display = 'none';
+            
+            // 1. Force back-facing environment camera access
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { exact: 'environment' } }
+            });
+            stream.getTracks().forEach(track => track.stop()); // Just need the permission
 
-        async function init() {
-            const container = document.createElement('div');
-            document.body.appendChild(container);
-
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
-            // Native VIO Light Estimation and Plane Tracking
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
+            // 2. Setup Scene
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-            container.appendChild(renderer.domElement);
+            document.body.appendChild(renderer.domElement);
 
-            // Cube object to verify VIO locking
-            const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-            const material = new THREE.MeshNormalMaterial();
-            cube = new THREE.Mesh(geometry, material);
+            const cube = new THREE.Mesh(
+                new THREE.BoxGeometry(0.2, 0.2, 0.2),
+                new THREE.MeshNormalMaterial()
+            );
             cube.position.set(0, 0, -0.5);
             scene.add(cube);
 
-            document.body.appendChild(XRButton.createButton(renderer, { 
-                requiredFeatures: ['hit-test', 'local-floor'] 
+            document.body.appendChild(XRButton.createButton(renderer, {
+                requiredFeatures: ['hit-test', 'local-floor']
             }));
 
-            renderer.setAnimationLoop((timestamp, frame) => {
+            renderer.setAnimationLoop(() => {
                 cube.rotation.y += 0.01;
                 renderer.render(scene, camera);
             });
-        }
-
-        document.getElementById('btn').onclick = () => {
-            document.getElementById('overlay').style.display = 'none';
-            init();
         };
     </script>
 </body>
