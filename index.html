@@ -2,221 +2,60 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Ultimate MediaPipe 6DoF SBS Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Native VIO Passthrough</title>
     <style>
-        body, html {
-            margin: 0; padding: 0; width: 100%; height: 100%;
-            background: #000; overflow: hidden;
-            display: flex; align-items: center; justify-content: center;
-        }
-        #container {
-            display: flex; align-items: center; justify-content: center;
-            width: 100%; height: 100%;
-        }
-        .eye {
-            height: 48vh;
-            width: calc(48vh * 1.77);
-            position: relative; overflow: hidden; border-radius: 40px;
-            background: #050505;
-            margin: 0 18px; /* Standard physical headset lens alignment */
-            border: 2px solid #222;
-        }
-        .eye canvas {
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+        #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            object-fit: cover;
+            display: flex; align-items: center; justify-content: center; z-index: 10;
         }
-        #btn {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 25px 50px; background: #007bc4; color: white;
-            font-size: 22px; font-weight: bold; border: none; border-radius: 15px; 
-            cursor: pointer; z-index: 100; box-shadow: 0 6px 25px rgba(0,0,0,0.8);
-        }
-        #hardware-vault { display: none; }
+        button { padding: 20px 40px; font-size: 20px; border-radius: 10px; cursor: pointer; }
     </style>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 </head>
 <body>
+    <div id="overlay"><button id="btn">START NATIVE AR</button></div>
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+        import { XRButton } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/webxr/XRButton.js';
 
-    <button id="btn" onclick="bootMediaPipeEngine()">START PRO-TRACKING Passthrough</button>
+        let camera, scene, renderer, cube;
 
-    <div id="container">
-        <div class="eye"><canvas id="viewLeft"></canvas></div>
-        <div class="eye"><canvas id="viewRight"></canvas></div>
-    </div>
+        async function init() {
+            const container = document.createElement('div');
+            document.body.appendChild(container);
 
-    <div id="hardware-vault">
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="masterCanvas"></canvas>
-    </div>
-
-    <script>
-        const video = document.getElementById('webcam');
-        const masterCanvas = document.getElementById('masterCanvas');
-        
-        const canvasLeft = document.getElementById('viewLeft');
-        const canvasRight = document.getElementById('viewRight');
-        const ctxLeft = canvasLeft.getContext('2d');
-        const ctxRight = canvasRight.getContext('2d');
-
-        let scene, camera, renderer, videoTexture;
-        let testCube, floorGrid;
-
-        // VIO tracking metrics
-        let targetX = 0, targetY = -1.15, targetZ = -2.5;
-        let currentX = 0, currentY = -1.15, currentZ = -2.5;
-        let targetQuaternion = new THREE.Quaternion();
-        let currentQuaternion = new THREE.Quaternion();
-
-        function build3DWorld() {
             scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            camera = new THREE.PerspectiveCamera(85, 1.77, 0.1, 100);
-            camera.position.set(0, 0, 0);
+            // Native VIO Light Estimation and Plane Tracking
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            container.appendChild(renderer.domElement);
 
-            videoTexture = new THREE.VideoTexture(video);
-            videoTexture.minFilter = THREE.LinearFilter;
-            scene.background = videoTexture;
+            // Cube object to verify VIO locking
+            const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const material = new THREE.MeshNormalMaterial();
+            cube = new THREE.Mesh(geometry, material);
+            cube.position.set(0, 0, -0.5);
+            scene.add(cube);
 
-            renderer = new THREE.WebGLRenderer({ canvas: masterCanvas, antialias: true, alpha: false });
-            
-            const renderMultiplier = Math.min(window.devicePixelRatio, 2.5);
-            renderer.setPixelRatio(renderMultiplier);
-            renderer.setSize(1280, 720);
+            document.body.appendChild(XRButton.createButton(renderer, { 
+                requiredFeatures: ['hit-test', 'local-floor'] 
+            }));
 
-            [canvasLeft, canvasRight].forEach(c => {
-                c.width = c.clientWidth * renderMultiplier;
-                c.height = c.clientHeight * renderMultiplier;
+            renderer.setAnimationLoop((timestamp, frame) => {
+                cube.rotation.y += 0.01;
+                renderer.render(scene, camera);
             });
-
-            // Tracking plane floor grid
-            floorGrid = new THREE.GridHelper(50, 50, 0x00ff00, 0x004400);
-            floorGrid.position.set(0, -1.4, 0); 
-            scene.add(floorGrid);
-
-            // Our target cube locked to the tracking data
-            const geometry = new THREE.BoxGeometry(0.45, 0.45, 0.45);
-            const material = new THREE.MeshBasicMaterial({ color: 0x00b3ff, wireframe: true });
-            testCube = new THREE.Mesh(geometry, material);
-            testCube.position.set(0, -1.15, -2.5); 
-            scene.add(testCube);
         }
 
-        async function bootMediaPipeEngine() {
-            document.getElementById('btn').style.display = 'none';
-            document.documentElement.requestFullscreen().catch(() => {});
-
-            // Request camera tracks to unlock system block masks
-            const tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = devices.filter(d => d.kind === 'videoinput');
-            tempStream.getTracks().forEach(t => t.stop());
-
-            // Force push to the last indexed camera (your 0.5x/0.6x ultra-wide lens module)
-            let ultraWideId = videoInputs.length > 1 ? videoInputs[videoInputs.length - 1].deviceId : null;
-
-            const productionStream = await navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: ultraWideId ? { deviceId: { exact: ultraWideId }, width: 1280, height: 720 } : { facingMode: "environment", width: 1280, height: 720 }
-            });
-            video.srcObject = productionStream;
-            video.play();
-
-            build3DWorld();
-
-            // Fire up low-latency gyro loops
-            if (window.DeviceOrientationEvent) {
-                window.addEventListener('deviceorientation', handleHardwareGyro, true);
-            }
-
-            // Fire up Google's tracking pipeline engine
-            initMediaPipeTracker();
-        }
-
-        function handleHardwareGyro(event) {
-            if (event.beta === null || event.gamma === null || event.alpha === null) return;
-
-            const alpha = event.alpha * (Math.PI / 180);
-            const beta = event.beta * (Math.PI / 180);
-            const gamma = event.gamma * (Math.PI / 180);
-
-            const isLandscape = window.innerWidth > window.innerHeight;
-            const euler = new THREE.Euler();
-            
-            if (isLandscape) {
-                euler.set(-gamma, -alpha - (Math.PI / 2), 0, 'YXZ');
-            } else {
-                euler.set(-(beta - (Math.PI / 2)), -alpha, 0, 'YXZ');
-            }
-            targetQuaternion.setFromEuler(euler);
-        }
-
-        // Google MediaPipe Spatial Surface Alignment Pipeline
-        function initMediaPipeTracker() {
-            const segmentation = new SelfieSegmentation({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
-            });
-
-            segmentation.setOptions({ modelSelection: 1 });
-
-            // MediaPipe intercepts frames and extracts real-world scene translation math
-            segmentation.onResults((results) => {
-                if (results.segmentationMask) {
-                    // Extract spatial change markers based on structural image updates
-                    // This creates clean, automated 6DoF tracking offsets
-                    let flowX = (Math.sin(Date.now() * 0.001) * 0.05); 
-                    let flowZ = (Math.cos(Date.now() * 0.001) * 0.05);
-
-                    targetX = flowX;
-                    targetZ = -2.5 + flowZ;
-                }
-            });
-
-            const trackingCamera = new Camera(video, {
-                onFrame: async () => {
-                    await segmentation.send({ image: video });
-                },
-                width: 640,
-                height: 480
-            });
-            trackingCamera.start();
-
-            // Run our graphics display thread loop
-            requestAnimationFrame(engineMainLoop);
-        }
-
-        function engineMainLoop() {
-            // Smooth rotation tracking
-            currentQuaternion.slerp(targetQuaternion, 0.2);
-            camera.quaternion.copy(currentQuaternion);
-
-            // Smooth 3D position tracking (prevents shaking/jumping)
-            currentX += (targetX - currentX) * 0.15;
-            currentZ += (targetZ - currentZ) * 0.15;
-
-            // Lock objects directly to the tracking coordinates
-            testCube.position.set(currentX, -1.15, currentZ);
-            floorGrid.position.set(currentX, -1.4, currentZ + 2.5);
-
-            testCube.rotation.y += 0.01;
-
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                videoTexture.needsUpdate = true;
-            }
-
-            // Render out the complete tracking frame exactly once
-            renderer.render(scene, camera);
-
-            // The Canvas Mirror Trick: Instantly paint the tracked image to both eyes cleanly
-            ctxLeft.drawImage(masterCanvas, 0, 0, canvasLeft.width, canvasLeft.height);
-            ctxRight.drawImage(masterCanvas, 0, 0, canvasRight.width, canvasRight.height);
-
-            requestAnimationFrame(engineMainLoop);
-        }
+        document.getElementById('btn').onclick = () => {
+            document.getElementById('overlay').style.display = 'none';
+            init();
+        };
     </script>
 </body>
 </html>
